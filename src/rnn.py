@@ -41,6 +41,8 @@ parser.add_argument('--use_batch_norm', type=int, default=0)
 parser.add_argument('--commission', type=float, default=0)
 parser.add_argument('--pnl_scale', type=float, default=224)
 parser.add_argument('--out_dim', type=int, default=0)
+parser.add_argument('--validation_split', type=float, default=0.3)
+parser.add_argument('--patience', type=int, default=10)
 args = parser.parse_args()
 data, file, warm_start, test = args.data, args.file, args.warm_start, args.test
 lr, batch_size, epochs, layer = args.lr, args.batch_size, args.epochs, args.layer
@@ -48,6 +50,7 @@ out_activation, hidden_sizes = args.out_activation, args.hidden_sizes
 loss, kernel_size, dilations = args.loss, args.kernel_size, args.dilations
 l2, dropout_rate, use_batch_norm = args.l2, args.dropout_rate, args.use_batch_norm
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
+validation_split, patience = args.validation_split, args.patience
 hidden_sizes = list(map(int, hidden_sizes.split(',')))
 dilations = list(map(int, dilations.split(',')))
 loss = 'binary_crossentropy' if loss == 'bce' else loss
@@ -260,7 +263,7 @@ for (l, h) in enumerate(hidden_sizes):
 o = Dense(out_dim, activation=out_activation)(o)
 model = Model(inputs=[i], outputs=[o])
 add_weight_decay(model, l2)
-# print(model.summary())
+print(model.summary())
 
 # warm start
 if warm_start and os.path.isfile(file):
@@ -299,6 +302,8 @@ else:
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
     callbacks.append(keras.callbacks.ModelCheckpoint(file))
+    if validation_split > 0:
+        callbacks.append(keras.callbacks.EarlyStopping(patience=patience, verbose=1))
     # callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5, patience=50, min_lr=1e-4))
 
 # compile
@@ -307,6 +312,8 @@ if 'mse' in str(loss):
     metric = ['mae']
 elif 'crossentropy' in str(loss):
     metric = ['acc']
+    if 'binary' in str(loss):
+        metric.append(pnl)
 else:
     metric = None
 pmodel.compile(loss=loss, optimizer=opt, metrics=metric, sample_weight_mode=sample_weight_mode)
@@ -317,7 +324,8 @@ pmodel.fit(x, y, sample_weight=w,
            callbacks=callbacks,
            epochs=epochs,
            verbose=1,
-           shuffle=False)
+           shuffle=False,
+           validation_split=validation_split)
 model.save(file, include_optimizer=False)
 score = model.evaluate(x, y, sample_weight=w, batch_size=batch_size)
 print('training loss:', score)

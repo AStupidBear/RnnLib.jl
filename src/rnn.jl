@@ -18,6 +18,8 @@
     commission::Float32 = 2f-4
     out_seq::Bool = true
     out_dim::Int = 0
+    validation_split::Float32 = 0.3
+    patience::Int = 10
 end
 
 is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.loss)
@@ -30,10 +32,11 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
     @unpack batch_size, epochs, layer, out_activation = m
     @unpack hidden_sizes, loss, kernel_size, dilations = m
     @unpack l2, dropout_rate, use_batch_norm, commission = m
+    @unpack validation_split, patience = m
     out_seq, out_dim = ndims(y) == 3, size(y, 1)
     pnl_scale = Meta.parse(get(ENV, "PNL_SCALE", "1"))
     loss == "bce" && out_dim > 1 && (loss = "cce")
-    loss == "bce" && out_dim == 1 && length(unique(y)) > 2 && (loss = "cce")
+    loss == "bce" && out_dim == 1 && length(unique(y)) > 2 && (loss = "spcce")
     if loss == "bce" && minimum(y) < 0
         y = (y .+ 1f0) ./ 2f0
     elseif loss == "spcce"
@@ -54,8 +57,10 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --dilations $dilations
         --l2 $l2 --dropout_rate $dropout_rate --use_batch_norm $use_batch_norm
-        --commission $commission --pnl_scale $pnl_scale --out_dim $out_dim`)
+        --commission $commission --pnl_scale $pnl_scale --out_dim $out_dim
+        --validation_split $validation_split --patience $patience`)
     m.rnn = read("rnn.h5")
+    cp("rnn.h5", "rnn.h5.bak", force = true)
     @pack! m = out_dim, out_seq
     warm_start == 0 && rm("rnn.h5")
     return m
@@ -116,8 +121,8 @@ function dump_rnn_data(x, y = nothing, w = nothing; out_dim = 1, out_seq = true,
     if size(x, 3) / seq_size < 5 && ndims(y) == 3
         xᵇ = batchfirst(rebatchseq(x, seq_size))
         yᵇ = batchfirst(rebatchseq(y, seq_size))
+        ŷᵇ = batchfirst(rebatchseq(y, seq_size))
         wᵇ = batchfirst(rebatchseq(w, seq_size))
-        ŷᵇ = batchfirst(rebatchseq(w, seq_size))
     else
         xᵇ, yᵇ = batchfirst(x), batchfirst(y)
         ŷᵇ, wᵇ = batchfirst(ŷ), batchfirst(w)
@@ -145,10 +150,10 @@ end
 modelhash(m::RnnModel) = hash(m.rnn)
 
 function receptive_field(m::RnnModel)
-    @unpack dilations, hidden_sizes = m
+    @unpack kernel_size, dilations, hidden_sizes = m
     dilations = Meta.parse.(split(dilations, ','))
     hidden_sizes = Meta.parse.(split(hidden_sizes, ','))
-    dilations[end] * length(hidden_sizes)
+    dilations[end] * length(hidden_sizes) * kernel_size
 end
 
 receptive_field(m) = 1

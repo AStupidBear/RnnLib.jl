@@ -81,7 +81,7 @@ end
 
 function predict_proba(m::RnnModel, x)
     ŷ = predict_rnn(m, x)
-    size(ŷ, 1) == 1 ? ŷ :
+    size(ŷ, 1) > 1 ? ŷ :
     cat(1 .- ŷ,  ŷ, dims = 1)
 end
 

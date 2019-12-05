@@ -21,10 +21,11 @@ GCMAES = "0.1"
 HDF5 = "0.12"
 HDF5Utils = "0.1"
 MLSuiteBase = "0.1"
-Parameters = "0.12
+Parameters = "0.12"
 PyCall = "1.90"
 PyCallUtils = "0.2"
 ScikitLearnBase = "0.5"
+julia = "1"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

@@ -13,9 +13,21 @@ Parameters = "d96e819e-fc66-5662-9728-84c9c7592b0a"
 PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
 PyCallUtils = "02651160-e6c3-11e9-0e2a-551f75d9519e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 ScikitLearnBase = "6e75b9c4-186b-50bd-896f-2d2496a4843e"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
+[compat]
+GCMAES = "0.1"
+HDF5 = "0.12"
+HDF5Utils = "0.1"
+MLSuiteBase = "0.1"
+Parameters = "0.12
+PyCall = "1.90"
+PyCallUtils = "0.2"
+ScikitLearnBase = "0.5"
+
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

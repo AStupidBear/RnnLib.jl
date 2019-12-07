@@ -298,7 +298,7 @@ if use_horovod:
     opt = hvd.DistributedOptimizer(opt)
 else:
     callbacks = [keras.callbacks.ModelCheckpoint(file)]
-    opt = keras.optimizers.Adam(lr, clipnorm=0.5)
+    opt = keras.optimizers.Adam(lr, clipnorm=1)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
     callbacks.append(keras.callbacks.ModelCheckpoint(file))

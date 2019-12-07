@@ -14,7 +14,7 @@
     dilations::String = "1,2,4,8,16,32,64"
     l2::Float32 = 0f-4
     dropout_rate::Float32 = 0
-    use_batch_norm::Int = 0
+    use_batch_norm::Int = 1
     commission::Float32 = 2f-4
     out_seq::Bool = true
     out_dim::Int = 0

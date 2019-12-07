@@ -330,9 +330,9 @@ model.save(file, include_optimizer=False)
 score = model.evaluate(x, y, sample_weight=w, batch_size=batch_size)
 print('training loss:', score)
 
-# convert keras to onnx
-onnx_model = onnxmltools.convert_keras(model)
-onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
+# # convert keras to onnx
+# onnx_model = onnxmltools.convert_keras(model)
+# onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
 # # onnxruntime inference
 # import time

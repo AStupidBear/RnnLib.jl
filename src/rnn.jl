@@ -12,7 +12,7 @@
     loss::String = "mse"
     kernel_size::Int = 2
     kernel_sizes::String = "7,9,11"
-    pool_size::Int = 256
+    pool_size::Int = 1
     dilations::String = "1,2,4,8,16,32,64"
     l2::Float32 = 0f-4
     dropout_rate::Float32 = 0
@@ -21,7 +21,7 @@
     commission::Float32 = 2f-4
     out_seq::Bool = true
     out_dim::Int = 0
-    validation_split::Float32 = 0.3
+    validation_split::Float32 = 0.2
     patience::Int = 10
 end
 
@@ -161,6 +161,6 @@ end
 
 receptive_field(m) = 1
 
-RnnRegressor(;ka...) = RnnModel(;out_activation = "tanh", warm_start = 1, ka...)
+RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)

@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+from warnings import filterwarnings
+filterwarnings("ignore", module='numpy')
+filterwarnings("ignore", module='tensorflow')
+
 import time
 from tcn import TCN
 from keras.models import model_from_json, load_model, Input, Model
@@ -6,9 +10,12 @@ from keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
 from keras.layers import Dense, Conv1D, SpatialDropout1D, BatchNormalization
 from keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
 from keras.layers import GRU, CuDNNGRU, LSTM, CuDNNLSTM, TimeDistributed
+from keras.initializers import RandomNormal, RandomUniform
 from keras.utils import multi_gpu_model
 from keras.utils.io_utils import HDF5Matrix
 from keras import backend as K
+from keras_adamw.optimizers_225 import AdamW
+from keras_adamw.utils import get_weight_decays
 import tensorflow as tf
 import keras
 import numpy as np
@@ -34,9 +41,9 @@ parser.add_argument('--layer', type=str, default='TCN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='10,10')
 parser.add_argument('--loss', type=str, default='pnl')
-parser.add_argument('--kernel_size', type=int, default=2)
+parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
-parser.add_argument('--pool_size', type=str, default='256')
+parser.add_argument('--pool_size', type=int, default=1)
 parser.add_argument('--dilations', type=str, default='1,2,4,8,16,32,64')
 parser.add_argument('--l2', type=float, default=0)
 parser.add_argument('--dropout_rate', type=float, default=0)
@@ -45,20 +52,19 @@ parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--commission', type=float, default=0)
 parser.add_argument('--pnl_scale', type=float, default=224)
 parser.add_argument('--out_dim', type=int, default=0)
-parser.add_argument('--validation_split', type=float, default=0.3)
+parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=10)
 args = parser.parse_args()
 data, file, warm_start, test = args.data, args.file, args.warm_start, args.test
 lr, batch_size, epochs, layer = args.lr, args.batch_size, args.epochs, args.layer
-out_activation, hidden_sizes, loss = args.out_activation, args.hidden_sizes, args.loss
-kernel_size, pool_size, dilations = args.kernel_size, args.pool_size, args.dilations
-l2, dropout_rate, use_batch_norm = args.l2, args.dropout_rate, args.use_batch_norm
-bottleneck_size = args.bottleneck_size
+out_activation, loss, kernel_size = args.out_activation, args.loss, args.kernel_size
+pool_size, l2, dropout_rate = args.pool_size, args.l2, args.dropout_rate
+use_batch_norm, bottleneck_size = args.use_batch_norm, args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
 validation_split, patience = args.validation_split, args.patience
-hidden_sizes = list(map(int, hidden_sizes.split(',')))
-dilations = list(map(int, dilations.split(',')))
-kernel_sizes = list(map(int, kernel_sizes.split(',')))
+hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
+dilations = list(map(int, args.dilations.split(',')))
+kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 
 loss = 'binary_crossentropy' if loss == 'bce' else loss
 loss = 'categorical_crossentropy' if loss == 'cce' else loss
@@ -150,18 +156,20 @@ def Rocket(filters,
         return_sequences=False):
     def rocket(i):
         outs = []
-        for i in range(filters):
-            kernel_size = np.random.choice(kernel_sizes)
-            dilation = 2 ** np.random.uniform(0, np.log2((pool_size - 1) // (kernel_size - 1)))
-            o = Conv1D(1, kernel_size, padding=padding, dilation=dilation)(i)
+        for n in range(100 * filters):
+            kernel_size = int(max(2, np.random.choice(kernel_sizes)))
+            max_dilation = np.log2((pool_size - 1) // (kernel_size - 1))
+            dilation = int(2 ** np.random.uniform(0, max(0, max_dilation)))
+            o = Conv1D(1, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
+                    kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
             outs.append(o)
         o = concatenate(outs)
         if return_sequences:
-            o_max = GlobalMaxPooling1D(pool_size)(o)
-            o_avg = GlobalAveragePooling1D(pool_size)(o)
-        else:
             o_max = CausalMaxPooling1D(pool_size)(o)
             o_avg = CausalAveragePooling1D(pool_size)(o)
+        else:
+            o_max = GlobalMaxPooling1D(pool_size)(o)
+            o_avg = GlobalAveragePooling1D(pool_size)(o)
         o = concatenate([o_max, o_avg])
         return o
     return rocket
@@ -177,12 +185,12 @@ def Inception(filters,
         use_batch_norm=True,
         bottleneck_size=32):
     def _inception_module(i):
-        kernel_sizes = [kernel_size // (2 ** i) for i in range(3)]
+        kernel_sizes = [kernel_size * (2 ** i) for i in range(3)]
         conv_list = [Conv1D(filters, 1, padding=padding, use_bias=False)(CausalMaxPooling1D(3)(i))]
         if bottleneck_size > 0 and int(i.shape[-1]) > 4 * bottleneck_size:
             i = Conv1D(bottleneck_size, 1, padding=padding, use_bias=False)(i)
-        for i in range(len(kernel_sizes)):
-            o = Conv1D(filters, kernel_sizes[i], padding=padding, use_bias=False)(i)
+        for ks in kernel_sizes:
+            o = Conv1D(filters, ks, padding=padding, use_bias=False)(i)
             conv_list.append(o)
         o = concatenate(conv_list)
         if use_batch_norm:
@@ -193,7 +201,7 @@ def Inception(filters,
         o = _inception_module(i)
         o = _inception_module(o)
         o = _inception_module(o)
-        i = Conv1D(filters, 1, padding=padding, use_bias=False)(i)
+        i = Conv1D(int(o.shape[-1]), 1, padding=padding, use_bias=False)(i)
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
@@ -204,20 +212,29 @@ def Inception(filters,
             o = CausalAveragePooling1D(pool_size)(o)
         else:
             o = GlobalAveragePooling1D()(o)
+        return o
     return inception
 
 
 def CausalAveragePooling1D(pool_size):
     def pool(i):
-        o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
-        o = AveragePooling1D(pool_size, padding='valid')(i)
+        if pool_size > 1:
+            o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
+            o = AveragePooling1D(pool_size, strides=1, padding='valid')(o)
+        else:
+            o = i
+        return o
     return pool
 
 
 def CausalMaxPooling1D(pool_size):
     def pool(i):
-        o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
-        o = MaxPooling1D(pool_size, padding='valid')(i)
+        if pool_size > 1:
+            o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
+            o = MaxPooling1D(pool_size, strides=1, padding='valid')(o)
+        else:
+            o = i
+        return o
     return pool
 
 
@@ -239,26 +256,7 @@ def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
         l += c1 * K.mean(K.abs(p[:, -1, :]))
     return l
 
-
-def add_weight_decay(model, weight_decay):
-    if (weight_decay is None) or (weight_decay == 0.0):
-        return
-    # recursion inside the model
-    def add_decay_loss(m, factor):
-        if isinstance(m, keras.Model):
-            for layer in m.layers:
-                add_decay_loss(layer, factor)
-        else:
-            for param in m.trainable_weights:
-                with keras.backend.name_scope('weight_regularizer'):
-                    if 'bias' not in param.name:
-                        regularizer = keras.regularizers.l2(factor)(param)
-                        m.add_loss(regularizer)
-    # weight decay and l2 regularization differs by a factor of 2
-    add_decay_loss(model, weight_decay / 2.0)
-    return
-
-# f16 precision
+# # f16 precision
 # if not use_batch_norm:
 #     K.set_floatx('float16')
 #     K.set_epsilon(1e-4)
@@ -331,14 +329,17 @@ if test == 1:
     exit()
 
 # Expected input batch shape: (N, T, F)
+pool_size = min(T // 3, pool_size)
 if layer == "MLP":
     o = i = Input(shape=(T, F))
     o = Flatten()(o)
 else:
     o = i = Input(shape=(None, F))
+if x.dtype == 'uint8':
+    o = Lambda(lambda z: z / 128 - 1)(o)
 if layer == 'TCN':
     o = TCN(hidden_sizes[0], kernel_size, 1, dilations=dilations, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, activation='relu', return_sequences=out_seq)(o)
-    if out_seq and pool_size > 1:
+    if out_seq:
         o = CausalAveragePooling1D(pool_size)(o)
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or out_seq
@@ -349,14 +350,16 @@ for (l, h) in enumerate(hidden_sizes):
     elif layer == "Conv":
         o = Conv(h, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'Rocket':
-        o = Rocket(h, pool_size, kernel_sizes, return_sequences=return_sequences)
+        if l == 0:
+            o = Rocket(h, pool_size, kernel_sizes, return_sequences=return_sequences)(o)
+        else:
+            o = Dense(h, activation='relu')(o)
     elif layer == 'Inception':
         o = Inception(h, kernel_size, pool_size, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, return_sequences=return_sequences, bottleneck_size=bottleneck_size)(o)
     elif isrnn(layer):
         o = eval(layer)(h, dropout=dropout_rate, return_sequences=return_sequences)(o)
 o = Dense(out_dim, activation=out_activation)(o)
 model = Model(inputs=[i], outputs=[o])
-add_weight_decay(model, l2)
 print(model.summary())
 
 # warm start
@@ -384,15 +387,16 @@ else:
 
 # optimizer and callbacks
 callbacks = []
+weight_decays = {l: l2 for l in get_weight_decays(model)}
 if use_horovod:
     # Horovod: broadcast initial variable states from rank 0 to all other processes.
     callbacks = callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
     # Horovod: adjust learning rate based on number of GPUs.
-    opt = keras.optimizers.Adam(lr * world_size, clipnorm=0.5)
+    opt = AdamW(lr * world_size, clipnorm=1, weight_decays=weight_decays)
     opt = hvd.DistributedOptimizer(opt)
 else:
     callbacks = [keras.callbacks.ModelCheckpoint(file)]
-    opt = keras.optimizers.Adam(lr, clipnorm=1)
+    opt = AdamW(lr, clipnorm=1, weight_decays=weight_decays)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
     callbacks.append(keras.callbacks.ModelCheckpoint(file))

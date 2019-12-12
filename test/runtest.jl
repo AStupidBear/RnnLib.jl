@@ -1,29 +1,34 @@
+using RnnLib
+using MLSuiteBase
 using Random
 using Statistics
-using RnnLib
-using MLSuite
 using Test
+
+ENV["USE_GPU"] = 0
 
 cd(mktempdir())
 
-F, N, T = 10, 100, 10
+F, N, T = 3, 100, 100
 Random.seed!(1234)
-x = randn(Float32, F, N, T)
-w = rand(Float32, N, T)
+x = rand(UInt8, F, N, T)
 y = mean(x, dims = 1)
+y = mean(x ./ 128 .- 1, dims = 1)
+w = rand(Float32, N, T)
 
-model = RnnRegressor(epochs = 100)
-RnnLib.fit!(model, x, y, w)
-ŷ = RnnLib.predict(model, x)
-r2 = r2_score(vec(ŷ), vec(y))
-@test r2 > 0.5
-
-model = RnnClassifier(epochs = 100)
-for binary in [true, false]
-    y′ = binary ? signone.(y) : @. ifelse(abs(y) > 0.1, sign(y) + 1.0, 1.0)
-    RnnLib.fit!(model, x, y′, w)
+for layer in ["ResNet", "Inception", "TCN", "Rocket"]
+    model = RnnRegressor(layer = layer, hidden_sizes = "5", epochs = 200, validation_split = 0)
+    RnnLib.fit!(model, x, y, w)
     ŷ = RnnLib.predict(model, x)
-    prob = RnnLib.predict_proba(model, x)
-    acc = accuracy_score(vec(ŷ), vec(y′))
-    @assert acc > 0.6
+    res = mean(abs, vec(y) .- vec(ŷ))
+    @test res < 0.3
+
+    model = RnnClassifier(layer = layer, hidden_sizes = "5", epochs = 200, validation_split = 0)
+    for binary in [true, false]
+        y′ = binary ? signone.(y) : @. ifelse(abs(y) > 0.1, sign(y) + 1.0, 1.0)
+        RnnLib.fit!(model, x, y′, w)
+        ŷ = RnnLib.predict(model, x)
+        prob = RnnLib.predict_proba(model, x)
+        res = mean(abs, vec(y′) .- vec(ŷ))
+        @test res < 0.3
+    end
 end

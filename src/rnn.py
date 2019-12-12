@@ -2,9 +2,10 @@
 import time
 from tcn import TCN
 from keras.models import model_from_json, load_model, Input, Model
-from keras.layers import Dense, Conv1D, GRU, CuDNNGRU, LSTM, CuDNNLSTM
-from keras.layers import SpatialDropout1D, GlobalAveragePooling1D, BatchNormalization
-from keras.layers import Layer, add, Lambda, Flatten, TimeDistributed, Activation
+from keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
+from keras.layers import Dense, Conv1D, SpatialDropout1D, BatchNormalization
+from keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
+from keras.layers import GRU, CuDNNGRU, LSTM, CuDNNLSTM, TimeDistributed
 from keras.utils import multi_gpu_model
 from keras.utils.io_utils import HDF5Matrix
 from keras import backend as K
@@ -34,10 +35,13 @@ parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='10,10')
 parser.add_argument('--loss', type=str, default='pnl')
 parser.add_argument('--kernel_size', type=int, default=2)
+parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
+parser.add_argument('--pool_size', type=str, default='256')
 parser.add_argument('--dilations', type=str, default='1,2,4,8,16,32,64')
 parser.add_argument('--l2', type=float, default=0)
 parser.add_argument('--dropout_rate', type=float, default=0)
 parser.add_argument('--use_batch_norm', type=int, default=0)
+parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--commission', type=float, default=0)
 parser.add_argument('--pnl_scale', type=float, default=224)
 parser.add_argument('--out_dim', type=int, default=0)
@@ -46,13 +50,16 @@ parser.add_argument('--patience', type=int, default=10)
 args = parser.parse_args()
 data, file, warm_start, test = args.data, args.file, args.warm_start, args.test
 lr, batch_size, epochs, layer = args.lr, args.batch_size, args.epochs, args.layer
-out_activation, hidden_sizes = args.out_activation, args.hidden_sizes
-loss, kernel_size, dilations = args.loss, args.kernel_size, args.dilations
+out_activation, hidden_sizes, loss = args.out_activation, args.hidden_sizes, args.loss
+kernel_size, pool_size, dilations = args.kernel_size, args.pool_size, args.dilations
 l2, dropout_rate, use_batch_norm = args.l2, args.dropout_rate, args.use_batch_norm
+bottleneck_size = args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
 validation_split, patience = args.validation_split, args.patience
 hidden_sizes = list(map(int, hidden_sizes.split(',')))
 dilations = list(map(int, dilations.split(',')))
+kernel_sizes = list(map(int, kernel_sizes.split(',')))
+
 loss = 'binary_crossentropy' if loss == 'bce' else loss
 loss = 'categorical_crossentropy' if loss == 'cce' else loss
 loss = 'sparse_categorical_crossentropy' if loss == 'spcce' else loss
@@ -64,11 +71,12 @@ out_activation = 'tanh' if loss == 'pnl' else out_activation
 
 def ResNet(filters,
         kernel_size,
+        pool_size,
         padding='causal',
         dropout_rate=0.0,
         return_sequences=False,
         activation='relu',
-        use_batch_norm=False):
+        use_batch_norm=True):
     def resnet(i):
         o = Conv1D(filters, 4 * kernel_size, padding=padding)(i)
         if use_batch_norm:
@@ -94,7 +102,9 @@ def ResNet(filters,
         o = Activation(activation)(o)
         if activation != 'linear' and dropout_rate > 0:
             o = SpatialDropout1D(dropout_rate)(o)
-        if not return_sequences:
+        if return_sequences:
+            o = CausalAveragePooling1D(pool_size)(o)
+        else:
             o = GlobalAveragePooling1D()(o)
         return o
     return resnet
@@ -103,7 +113,7 @@ def ResNet(filters,
 def MLP(hidden_size,
         dropout_rate=0.0,
         activation='relu',
-        use_batch_norm=False):
+        use_batch_norm=True):
     def mlp(i):
         o = Dense(hidden_size)(i)
         if use_batch_norm:
@@ -118,7 +128,7 @@ def MLP(hidden_size,
 def Conv(filters,
         dropout_rate=0.0,
         activation='relu',
-        use_batch_norm=False,
+        use_batch_norm=True,
         return_sequences=False):
     def conv(i):
         o = Conv1D(filters, 1, padding='causal')(i)
@@ -131,6 +141,84 @@ def Conv(filters,
             o = Lambda(lambda x: x[:, -1, :])(o)
         return o
     return conv
+
+
+def Rocket(filters,
+        pool_size,
+        kernel_sizes=(7, 9, 11),
+        padding='causal',
+        return_sequences=False):
+    def rocket(i):
+        outs = []
+        for i in range(filters):
+            kernel_size = np.random.choice(kernel_sizes)
+            dilation = 2 ** np.random.uniform(0, np.log2((pool_size - 1) // (kernel_size - 1)))
+            o = Conv1D(1, kernel_size, padding=padding, dilation=dilation)(i)
+            outs.append(o)
+        o = concatenate(outs)
+        if return_sequences:
+            o_max = GlobalMaxPooling1D(pool_size)(o)
+            o_avg = GlobalAveragePooling1D(pool_size)(o)
+        else:
+            o_max = CausalMaxPooling1D(pool_size)(o)
+            o_avg = CausalAveragePooling1D(pool_size)(o)
+        o = concatenate([o_max, o_avg])
+        return o
+    return rocket
+
+
+def Inception(filters,
+        kernel_size,
+        pool_size,
+        padding='causal',
+        dropout_rate=0.0,
+        return_sequences=False,
+        activation='relu',
+        use_batch_norm=True,
+        bottleneck_size=32):
+    def _inception_module(i):
+        kernel_sizes = [kernel_size // (2 ** i) for i in range(3)]
+        conv_list = [Conv1D(filters, 1, padding=padding, use_bias=False)(CausalMaxPooling1D(3)(i))]
+        if bottleneck_size > 0 and int(i.shape[-1]) > 4 * bottleneck_size:
+            i = Conv1D(bottleneck_size, 1, padding=padding, use_bias=False)(i)
+        for i in range(len(kernel_sizes)):
+            o = Conv1D(filters, kernel_sizes[i], padding=padding, use_bias=False)(i)
+            conv_list.append(o)
+        o = concatenate(conv_list)
+        if use_batch_norm:
+            o = BatchNormalization()(o)
+        o = Activation(activation)(o)
+        return o
+    def inception(i):
+        o = _inception_module(i)
+        o = _inception_module(o)
+        o = _inception_module(o)
+        i = Conv1D(filters, 1, padding=padding, use_bias=False)(i)
+        if use_batch_norm:
+            i = BatchNormalization()(i)
+        o = add([i, o])
+        o = Activation(activation)(o)
+        if activation != 'linear' and dropout_rate > 0:
+            o = SpatialDropout1D(dropout_rate)(o)
+        if return_sequences:
+            o = CausalAveragePooling1D(pool_size)(o)
+        else:
+            o = GlobalAveragePooling1D()(o)
+    return inception
+
+
+def CausalAveragePooling1D(pool_size):
+    def pool(i):
+        o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
+        o = AveragePooling1D(pool_size, padding='valid')(i)
+    return pool
+
+
+def CausalMaxPooling1D(pool_size):
+    def pool(i):
+        o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
+        o = MaxPooling1D(pool_size, padding='valid')(i)
+    return pool
 
 
 def isrnn(layer):
@@ -250,14 +338,20 @@ else:
     o = i = Input(shape=(None, F))
 if layer == 'TCN':
     o = TCN(hidden_sizes[0], kernel_size, 1, dilations=dilations, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, activation='relu', return_sequences=out_seq)(o)
+    if out_seq and pool_size > 1:
+        o = CausalAveragePooling1D(pool_size)(o)
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or out_seq
     if layer == 'ResNet':
-        o = ResNet(h, kernel_size, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
+        o = ResNet(h, kernel_size, pool_size, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'MLP':
         o = MLP(h, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm)(o)
     elif layer == "Conv":
         o = Conv(h, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
+    elif layer == 'Rocket':
+        o = Rocket(h, pool_size, kernel_sizes, return_sequences=return_sequences)
+    elif layer == 'Inception':
+        o = Inception(h, kernel_size, pool_size, dropout_rate=dropout_rate, use_batch_norm=use_batch_norm, return_sequences=return_sequences, bottleneck_size=bottleneck_size)(o)
     elif isrnn(layer):
         o = eval(layer)(h, dropout=dropout_rate, return_sequences=return_sequences)(o)
 o = Dense(out_dim, activation=out_activation)(o)

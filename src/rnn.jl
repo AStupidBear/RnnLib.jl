@@ -11,10 +11,13 @@
     hidden_sizes::String = "10,10"
     loss::String = "mse"
     kernel_size::Int = 2
+    kernel_sizes::String = "7,9,11"
+    pool_size::Int = 256
     dilations::String = "1,2,4,8,16,32,64"
     l2::Float32 = 0f-4
     dropout_rate::Float32 = 0
     use_batch_norm::Int = 1
+    bottleneck_size::Int = 32
     commission::Float32 = 2f-4
     out_seq::Bool = true
     out_dim::Int = 0
@@ -30,9 +33,9 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
     columns = something(columns, string.(1:size(x, 1)))
     @unpack rnn, seq_size, n_jobs, warm_start, lr = m
     @unpack batch_size, epochs, layer, out_activation = m
-    @unpack hidden_sizes, loss, kernel_size, dilations = m
-    @unpack l2, dropout_rate, use_batch_norm, commission = m
-    @unpack validation_split, patience = m
+    @unpack hidden_sizes, loss, kernel_size, kernel_sizes, pool_size = m
+    @unpack dilations, l2, dropout_rate, use_batch_norm, bottleneck_size = m
+    @unpack commission, validation_split, patience = m
     out_seq, out_dim = ndims(y) == 3, size(y, 1)
     pnl_scale = Meta.parse(get(ENV, "PNL_SCALE", "1"))
     loss == "bce" && out_dim > 1 && (loss = "cce")
@@ -55,10 +58,10 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
     run(`mpirun --host $hosts python $rnnpy --data $dst --file rnn.h5
         --warm_start $warm_start --lr $lr --batch_size $batch_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
-        --loss $loss --kernel_size $kernel_size --dilations $dilations
-        --l2 $l2 --dropout_rate $dropout_rate --use_batch_norm $use_batch_norm
-        --commission $commission --pnl_scale $pnl_scale --out_dim $out_dim
-        --validation_split $validation_split --patience $patience`)
+        --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size
+        --dilations $dilations --l2 $l2 --dropout_rate $dropout_rate --use_batch_norm $use_batch_norm
+        --bottleneck_size $bottleneck_size --commission $commission --pnl_scale $pnl_scale
+        --out_dim $out_dim --validation_split $validation_split --patience $patience`)
     m.rnn = read("rnn.h5")
     cp("rnn.h5", "rnn.h5.bak", force = true)
     @pack! m = out_dim, out_seq

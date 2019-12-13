@@ -86,7 +86,7 @@ models = [
     RnnModel(loss = "spcce", layer = "ResNet", hidden_sizes = "64,128,128"),
     RnnModel(loss = "spcce", layer = "Inception", hidden_sizes = "128,128", kernel_size = 10),
     RnnModel(loss = "spcce", layer = "TCN", hidden_sizes = "64", max_dilation = 8),
-    RnnModel(loss = "spcce", layer = "Rocket", hidden_sizes = "100", lr = 1e-5, max_dilation = 1024, epochs = 300, validation_split = 0)
+    RnnModel(loss = "spcce", layer = "Rocket", hidden_sizes = "100", max_dilation = 1024, validation_split = 0)
 ]
 for dset in ["FreezerRegularTrain"] ∪ basename.(glob("*/*", UEA_UCR))
     x_trn, y_trn, x_tst, y_tst = load_dataset(dset)

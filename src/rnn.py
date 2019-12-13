@@ -17,6 +17,7 @@ from keras.utils.io_utils import HDF5Matrix
 from keras import backend as K
 from keras_adamw.optimizers_225 import AdamW
 from keras_adamw.utils import get_weight_decays
+from keras_lr_finder import LRFinder
 import tensorflow as tf
 import keras
 import numpy as np
@@ -446,6 +447,14 @@ elif 'crossentropy' in str(loss):
 else:
     metric = None
 pmodel.compile(loss=loss, optimizer=opt, metrics=metric, sample_weight_mode=sample_weight_mode)
+
+if layer == 'Rocket' and lr >= 1e-3:
+    lr_finder = LRFinder(pmodel)
+    epochs_ = max(1, 100 * batch_size // N)
+    lr_finder.find(x, y, 1e-6, 1e-2, batch_size, epochs_, sample_weight=w, shuffle=False)
+    best_lr = min(1e-3, lr_finder.get_best_lr(5))
+    K.set_value(pmodel.optimizer.lr, best_lr)
+    print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
 pmodel.fit(x, y, sample_weight=w,

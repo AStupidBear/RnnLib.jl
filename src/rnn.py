@@ -11,6 +11,7 @@ from keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormaliz
 from keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
 from keras.layers import GRU, CuDNNGRU, LSTM, CuDNNLSTM, TimeDistributed
 from keras.initializers import RandomNormal, RandomUniform
+from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from keras.utils import multi_gpu_model
 from keras.utils.io_utils import HDF5Matrix
 from keras import backend as K
@@ -158,7 +159,7 @@ def Rocket(filters,
         outs = []
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
         filters_ = int(100 * filters / len(dilations) / len(kernel_sizes))
-        if filters_ > 2:
+        if filters_ > 1:
             for kernel_size in kernel_sizes:
                 for dilation in dilations:
                     o = Conv1D(filters_, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
@@ -421,19 +422,18 @@ callbacks = []
 weight_decays = {l: l2 for l in get_weight_decays(model)}
 if use_horovod:
     # Horovod: broadcast initial variable states from rank 0 to all other processes.
-    callbacks = callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
+    callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
     # Horovod: adjust learning rate based on number of GPUs.
     opt = AdamW(lr * world_size, clipnorm=1, weight_decays=weight_decays)
     opt = hvd.DistributedOptimizer(opt)
 else:
-    callbacks = [keras.callbacks.ModelCheckpoint(file)]
     opt = AdamW(lr, clipnorm=1, weight_decays=weight_decays)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
-    callbacks.append(keras.callbacks.ModelCheckpoint(file))
+    callbacks.append(ModelCheckpoint(file))
     if validation_split > 0:
-        callbacks.append(keras.callbacks.EarlyStopping(patience=patience, verbose=1))
-    # callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5, patience=50, min_lr=1e-4))
+        callbacks.append(EarlyStopping(patience=patience, verbose=1))
+    # callbacks.append(ReduceLROnPlateau(monitor='loss', factor=0.5, min_lr=1e-6, varbose=1))
 
 # compile
 sample_weight_mode = None if w is None or not out_seq else 'temporal'

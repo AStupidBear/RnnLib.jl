@@ -5,17 +5,17 @@
     warm_start::Int = 0
     lr::Float32 = 1f-3
     batch_size::Int = 32
-    epochs::Int = 10
-    layer::String = "TCN"
+    epochs::Int = 100
+    layer::String = "Inception"
     out_activation::String = "linear"
-    hidden_sizes::String = "10,10"
+    hidden_sizes::String = "128"
     loss::String = "mse"
-    kernel_size::Int = 2
+    kernel_size::Int = 3
     kernel_sizes::String = "7,9,11"
     pool_size::Int = 1
-    dilations::String = "1,2,4,8,16,32,64"
+    max_dilation::Int = 64
     l2::Float32 = 0f-4
-    dropout_rate::Float32 = 0
+    dropout::Float32 = 0
     use_batch_norm::Int = 1
     bottleneck_size::Int = 32
     commission::Float32 = 2f-4
@@ -34,7 +34,7 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
     @unpack rnn, seq_size, n_jobs, warm_start, lr = m
     @unpack batch_size, epochs, layer, out_activation = m
     @unpack hidden_sizes, loss, kernel_size, kernel_sizes, pool_size = m
-    @unpack dilations, l2, dropout_rate, use_batch_norm, bottleneck_size = m
+    @unpack max_dilation, l2, dropout, use_batch_norm, bottleneck_size = m
     @unpack commission, validation_split, patience = m
     out_seq, out_dim = ndims(y) == 3, size(y, 1)
     pnl_scale = Meta.parse(get(ENV, "PNL_SCALE", "1"))
@@ -59,7 +59,7 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
         --warm_start $warm_start --lr $lr --batch_size $batch_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size
-        --dilations $dilations --l2 $l2 --dropout_rate $dropout_rate --use_batch_norm $use_batch_norm
+        --max_dilation $max_dilation --l2 $l2 --dropout $dropout --use_batch_norm $use_batch_norm
         --bottleneck_size $bottleneck_size --commission $commission --pnl_scale $pnl_scale
         --out_dim $out_dim --validation_split $validation_split --patience $patience`)
     m.rnn = read("rnn.h5")

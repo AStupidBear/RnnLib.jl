@@ -91,7 +91,7 @@ models = [
 for dset in ["FreezerRegularTrain"] ∪ basename.(glob("*/*", UEA_UCR))
     x_trn, y_trn, x_tst, y_tst = load_dataset(dset)
     maximum(y_trn) >= 2 && continue
-    for model in models[end:end]
+    for model in models
         RnnLib.fit!(model, x_trn, y_trn)
         ŷ_trn = RnnLib.predict(model, x_trn)
         ŷ_tst = RnnLib.predict(model, x_tst)

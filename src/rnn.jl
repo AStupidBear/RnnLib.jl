@@ -60,6 +60,7 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
     else
         exe = `mpirun --host $hosts python`
     end
+    @pack! m = out_dim, out_seq
     run(`$exe $rnnpy --data $dst --file rnn.h5
         --warm_start $warm_start --lr $lr --batch_size $batch_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
@@ -69,20 +70,22 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
         --out_dim $out_dim --validation_split $validation_split --patience $patience`)
     m.rnn = read("rnn.h5")
     cp("rnn.h5", "rnn.h5.bak", force = true)
-    @pack! m = out_dim, out_seq
     warm_start == 0 && rm("rnn.h5")
     return m
 end
 
 function predict_rnn(m::RnnModel, x)
-    @unpack rnn, batch_size, out_seq, out_dim = m
+    @unpack rnn, batch_size, out_seq, out_dim, seq_size = m
     dst = dump_rnn_data(x, out_seq = out_seq, out_dim = out_dim)
     write("rnn.h5", rnn)
-    run(`python $rnnpy --test 1 --data $dst
-        --file rnn.h5 --batch_size $batch_size`)
-    ŷ = h5read(dst, "p")
-    perm = (1, ndims(ŷ):-1:2...)
-    ŷ = permutedims(ŷ, perm)
+    run(`python $rnnpy --test 1 --data $dst --file rnn.h5 --batch_size $batch_size`)
+    ŷ = fill(0f0, out_dim, (out_seq ? size(x)[2:end] : size(x, 2))...)
+    if size(x, 3) / seq_size > 5 && ndims(y) == 3
+        ŷᵇ = batchfirst(rebatchseq(ŷ, seq_size))
+    else
+        ŷᵇ = batchfirst(ŷ)
+    end
+    copyto!(ŷᵇ, h5read(dst, "p"))
     rm("rnn.h5")
     return ŷ
 end
@@ -126,7 +129,7 @@ function dump_rnn_data(x, y = nothing, w = nothing; out_dim = 1, out_seq = true,
         w = reshape(w, 1, size(y)[2:end]...)
     end
     ŷ = fill(0f0, out_dim, size(y)[2:end]...)
-    if size(x, 3) / seq_size < 5 && ndims(y) == 3
+    if size(x, 3) / seq_size > 5 && ndims(y) == 3
         xᵇ = batchfirst(rebatchseq(x, seq_size))
         yᵇ = batchfirst(rebatchseq(y, seq_size))
         ŷᵇ = batchfirst(rebatchseq(y, seq_size))

@@ -55,7 +55,12 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
     hosts = join(pmap(n -> gethostname(), 1:max(n_jobs, nworkers())), ',')
     dst = dump_rnn_data(x, y, w, out_dim = out_dim, seq_size = seq_size, shuffle = shuffle)
     !isempty(rnn) && write("rnn.h5", rnn)
-    run(`mpirun --host $hosts python $rnnpy --data $dst --file rnn.h5
+    if isnothing(Sys.which("mpiexec"))
+        exe = `python`
+    else
+        exe = `mpirun --host $hosts python`
+    end
+    run(`$exe $rnnpy --data $dst --file rnn.h5
         --warm_start $warm_start --lr $lr --batch_size $batch_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size

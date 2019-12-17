@@ -53,14 +53,13 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
         shuffle = true
     end
     hosts = join(pmap(n -> gethostname(), 1:max(n_jobs, nworkers())), ',')
-    dst = dump_rnn_data(x, y, w, out_dim = out_dim, seq_size = seq_size, shuffle = shuffle)
+    dst, = dump_rnn_data(x, y, w, out_dim, out_seq, seq_size, shuffle)
     !isempty(rnn) && write("rnn.h5", rnn)
     if isnothing(Sys.which("mpiexec"))
         exe = `python`
     else
         exe = `mpirun --host $hosts python`
     end
-    @pack! m = out_dim, out_seq
     run(`$exe $rnnpy --data $dst --file rnn.h5
         --warm_start $warm_start --lr $lr --batch_size $batch_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
@@ -69,6 +68,7 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
         --bottleneck_size $bottleneck_size --commission $commission --pnl_scale $pnl_scale
         --out_dim $out_dim --validation_split $validation_split --patience $patience`)
     m.rnn = read("rnn.h5")
+    @pack! m = out_dim, out_seq
     cp("rnn.h5", "rnn.h5.bak", force = true)
     warm_start == 0 && rm("rnn.h5")
     return m
@@ -76,19 +76,15 @@ end
 
 function predict_rnn(m::RnnModel, x)
     @unpack rnn, batch_size, out_seq, out_dim, seq_size = m
-    dst = dump_rnn_data(x, out_seq = out_seq, out_dim = out_dim)
+    dst, ŷᵇ = dump_rnn_data(x, nothing, nothing, out_dim, out_seq, seq_size)
     write("rnn.h5", rnn)
     run(`python $rnnpy --test 1 --data $dst --file rnn.h5 --batch_size $batch_size`)
-    ŷ = fill(0f0, out_dim, (out_seq ? size(x)[2:end] : size(x, 2))...)
-    if size(x, 3) / seq_size > 5 && ndims(y) == 3
-        ŷᵇ = batchfirst(rebatchseq(ŷ, seq_size))
-    else
-        ŷᵇ = batchfirst(ŷ)
-    end
     copyto!(ŷᵇ, h5read(dst, "p"))
     rm("rnn.h5")
-    return ŷ
+    return rootparent(ŷᵇ)
 end
+
+rootparent(x) = parent(x) === x ? x : rootparent(parent(x))
 
 function predict_proba(m::RnnModel, x)
     ŷ = predict_rnn(m, x)
@@ -116,7 +112,7 @@ function consistent(dst, x)
     end
 end
 
-function dump_rnn_data(x, y = nothing, w = nothing; out_dim = 1, out_seq = true, seq_size = size(x, 3), shuffle = false)
+function dump_rnn_data(x, y, w, out_dim, out_seq, seq_size, shuffle = false)
     seq_size = seq_size < 1 ? size(x, 3) : seq_size
     rng = MersenneTwister(hash(Main))
     dst = abspath(randstring(rng) * ".rnn")
@@ -155,7 +151,7 @@ function dump_rnn_data(x, y = nothing, w = nothing; out_dim = 1, out_seq = true,
         end
     end
     atexit(() -> rm(dst, force = true))
-    return dst
+    return dst, ŷᵇ 
 end
 
 modelhash(m::RnnModel) = hash(m.rnn)

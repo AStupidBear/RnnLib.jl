@@ -42,7 +42,7 @@ parser.add_argument('--epochs', type=int, default=1)
 parser.add_argument('--layer', type=str, default='Inception')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
-parser.add_argument('--loss', type=str, default='pnl')
+parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
 parser.add_argument('--pool_size', type=int, default=1)
@@ -293,6 +293,7 @@ def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
 #     K.set_epsilon(1e-4)
 
 # setenv
+os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
 usegpu = os.getenv('USE_GPU', '1') == '1'
 if not usegpu:
@@ -334,7 +335,7 @@ if os.path.isfile(data) and os.name != 'nt':
     w_mean = HDF5Matrix(data, 'w').data[:].mean()
     N, T, F = x.shape
 else:
-    F, T, N = 30, 66608, 224 // world_size
+    F, T, N = 30, 666, 2240 // world_size
     N = N // batch_size * batch_size
     x = np.random.randn(N, T, F)
     y = np.random.randn(N, T, 1)
@@ -352,12 +353,22 @@ if test == 0 and usegpu and tf.test.is_gpu_available():
     config.gpu_options.allow_growth = True
     config.gpu_options.visible_device_list = str(local_rank)
     K.set_session(tf.Session(config=config))
+else:
+    import ngraph_bridge
 
 # test mode
 if test == 1:
     model = load_model(file, compile=False)
     p.data[start:end] = model.predict(x, batch_size=batch_size)
     exit()
+
+def DenseMod(units, activation=None):
+    def densemod(i):
+        if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
+            return Conv1D(units, 1, padding='same', activation=activation)(i)
+        else:
+            return Dense(units, activation=activation)(i)
+    return densemod
 
 # Expected input batch shape: (N, T, F)
 pool_size = min(T // 3, pool_size)
@@ -383,15 +394,15 @@ for (l, h) in enumerate(hidden_sizes):
         if l == 0:
             o = Rocket(h, pool_size, max_dilation, kernel_sizes, return_sequences=return_sequences)(o)
         else:
-            o = Dense(h, activation='relu')(o)
+            o = DenseMod(h, activation='relu')(o)
     elif layer == 'TCN':
         if l == 0:
             o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
         else:
-            o = Dense(h, activation='relu')(o)
+            o = DenseMod(h, activation='relu')(o)
     elif isrnn(layer):
         o = eval(layer)(h, dropout=dropout, return_sequences=return_sequences)(o)
-o = Dense(out_dim, activation=out_activation)(o)
+o = DenseMod(out_dim, activation=out_activation)(o)
 model = Model(inputs=[i], outputs=[o])
 print(model.summary())
 
@@ -468,9 +479,10 @@ model.save(file, include_optimizer=False)
 score = model.evaluate(x, y, sample_weight=w, batch_size=batch_size)
 print('training loss:', score)
 
-# # convert keras to onnx
-# onnx_model = onnxmltools.convert_keras(model)
-# onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
+# convert keras to onnx
+if dropout == 0:
+    onnx_model = onnxmltools.convert_keras(model)
+    onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
 # # onnxruntime inference
 # import time

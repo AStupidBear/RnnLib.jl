@@ -353,7 +353,7 @@ if test == 0 and usegpu and tf.test.is_gpu_available():
     config.gpu_options.allow_growth = True
     config.gpu_options.visible_device_list = str(local_rank)
     K.set_session(tf.Session(config=config))
-else:
+elif os.getenv('USE_NGRAPH', '0') == '1':
     import ngraph_bridge
 
 # test mode

@@ -1,9 +1,9 @@
 @with_kw mutable struct RnnModel <: BaseEstimator
     rnn::Vector{UInt8} = UInt8[]
-    seq_size::Int = 0
     n_jobs::Int = 1
     warm_start::Int = 0
     lr::Float32 = 1f-3
+    seq_size::Int = 0
     batch_size::Int = 32
     epochs::Int = 100
     layer::String = "Inception"
@@ -29,15 +29,14 @@ is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.loss)
 
 const rnnpy = joinpath(@__DIR__, "rnn.py")
 
-function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
+function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
     columns = something(columns, string.(1:size(x, 1)))
-    @unpack rnn, seq_size, n_jobs, warm_start, lr = m
+    @unpack rnn, n_jobs, warm_start, lr, seq_size = m
     @unpack batch_size, epochs, layer, out_activation = m
     @unpack hidden_sizes, loss, kernel_size, kernel_sizes, pool_size = m
     @unpack max_dilation, l2, dropout, use_batch_norm, bottleneck_size = m
     @unpack commission, validation_split, patience = m
     out_seq, out_dim = ndims(y) == 3, size(y, 1)
-    pnl_scale = Meta.parse(get(ENV, "PNL_SCALE", "1"))
     loss == "bce" && out_dim > 1 && (loss = "cce")
     loss == "bce" && out_dim == 1 && length(unique(y)) > 2 && (loss = "spcce")
     if loss == "bce" && minimum(y) < 0
@@ -46,22 +45,20 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
         out_dim = Int(maximum(y)) + 1
     end
     if occursin(r"LSTM|GRU", layer)
-        shuffle, N = false, size(x, 2)
+        N = size(x, 2)
         batch_size = max(1, batch_size ÷ N) * N
         @pack! m = batch_size
-    else
-        shuffle = true
     end
     hosts = join(pmap(n -> gethostname(), 1:max(n_jobs, nworkers())), ',')
-    dst, = dump_rnn_data(x, y, w, out_dim, out_seq, seq_size, shuffle)
+    dst, = dump_rnn_data(x, y, w, out_dim, out_seq)
     !isempty(rnn) && write("rnn.h5", rnn)
     if isnothing(Sys.which("mpiexec"))
         exe = `python`
     else
         exe = `mpirun --host $hosts python`
     end
-    run(`$exe $rnnpy --data $dst --file rnn.h5
-        --warm_start $warm_start --lr $lr --batch_size $batch_size --epochs $epochs
+    run(`$exe $rnnpy --data $dst --file rnn.h5 --warm_start $warm_start
+        --lr $lr --batch_size $batch_size --seq_size $seq_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size
         --max_dilation $max_dilation --l2 $l2 --dropout $dropout --use_batch_norm $use_batch_norm
@@ -76,15 +73,14 @@ end
 
 function predict_rnn(m::RnnModel, x)
     @unpack rnn, batch_size, out_seq, out_dim, seq_size = m
-    dst, ŷᵇ = dump_rnn_data(x, nothing, nothing, out_dim, out_seq, seq_size)
+    dst = dump_rnn_data(x, nothing, nothing, out_dim, out_seq)
     write("rnn.h5", rnn)
-    run(`python $rnnpy --test 1 --data $dst --file rnn.h5 --batch_size $batch_size`)
-    copyto!(ŷᵇ, h5read(dst, "p"))
+    run(`python $rnnpy --test 1 --data $dst --file rnn.h5
+        --batch_size $batch_size --seq_size $seq_size`)
+    ŷ = h5read(dst, "p")
     rm("rnn.h5")
-    return rootparent(ŷᵇ)
+    return ŷ
 end
-
-rootparent(x) = parent(x) === x ? x : rootparent(parent(x))
 
 function predict_proba(m::RnnModel, x)
     ŷ = predict_rnn(m, x)
@@ -112,46 +108,30 @@ function consistent(dst, x)
     end
 end
 
-function dump_rnn_data(x, y, w, out_dim, out_seq, seq_size, shuffle = false)
-    seq_size = seq_size < 1 ? size(x, 3) : seq_size
+function dump_rnn_data(x, y, w, out_dim, out_seq)
     rng = MersenneTwister(hash(Main))
     dst = abspath(randstring(rng) * ".rnn")
     if isnothing(y)
-        y = fill(0f0, out_dim, (out_seq ? size(x)[2:end] : size(x, 2))...)
+        dims = out_seq ? size(x)[2:end] : size(x, 2)
+        y = fill(0f0, out_dim, dims...)
     end
     if isnothing(w)
-        w = fill(1f0, 1, size(y)[2:end]...)
+        w = fill(1f0, size(y)[2:end]...)
     else
-        w = reshape(w, 1, size(y)[2:end]...)
+        w = reshape(w, size(y)[2:end]...)
     end
     ŷ = fill(0f0, out_dim, size(y)[2:end]...)
-    if size(x, 3) / seq_size > 5 && ndims(y) == 3
-        xᵇ = batchfirst(rebatchseq(x, seq_size))
-        yᵇ = batchfirst(rebatchseq(y, seq_size))
-        ŷᵇ = batchfirst(rebatchseq(y, seq_size))
-        wᵇ = batchfirst(rebatchseq(w, seq_size))
-    else
-        xᵇ, yᵇ = batchfirst(x), batchfirst(y)
-        ŷᵇ, wᵇ = batchfirst(ŷ), batchfirst(w)
-    end
-    if shuffle
-        rng = MersenneTwister(1234)
-        is = randperm(rng, size(xᵇ, 3))
-        xᵇ, yᵇ = cview(xᵇ, is), cview(yᵇ, is)
-        ŷᵇ, wᵇ = cview(ŷᵇ, is), cview(wᵇ, is)
-    end
-    wᵇ = reshape(wᵇ, size(yᵇ)[2:end]...)
-    if !isfile(dst) || !consistent(dst, xᵇ)
-        h5save(dst, (x = xᵇ, y = yᵇ, w = wᵇ, p = ŷᵇ))
+    if !isfile(dst) || !consistent(dst, x)
+        h5save(dst, (x = x, y = y, w = w, p = ŷ))
     else
         h5open(dst, "r+") do fid
-            write_batch(fid, "y", yᵇ)
-            write_batch(fid, "w", wᵇ)
-            write_batch(fid, "p", ŷᵇ)
+            write_batch(fid, "y", y)
+            write_batch(fid, "w", w)
+            write_batch(fid, "p", ŷ)
         end
     end
     atexit(() -> rm(dst, force = true))
-    return dst, ŷᵇ 
+    return dst
 end
 
 modelhash(m::RnnModel) = hash(m.rnn)

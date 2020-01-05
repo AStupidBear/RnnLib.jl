@@ -37,6 +37,7 @@ parser.add_argument('--file', type=str, default='rnn.h5')
 parser.add_argument('--warm_start', type=int, default=0)
 parser.add_argument('--test', type=int, default=0)
 parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--seq_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
 parser.add_argument('--layer', type=str, default='Inception')
@@ -52,14 +53,14 @@ parser.add_argument('--dropout', type=float, default=0)
 parser.add_argument('--use_batch_norm', type=int, default=1)
 parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--commission', type=float, default=0)
-parser.add_argument('--pnl_scale', type=float, default=224)
+parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=10)
 args = parser.parse_args()
 data, file, warm_start, test = args.data, args.file, args.warm_start, args.test
-lr, batch_size, epochs, layer = args.lr, args.batch_size, args.epochs, args.layer
-out_activation, loss, kernel_size = args.out_activation, args.loss, args.kernel_size
+lr, batch_size, seq_size, epochs = args.lr, args.batch_size, args.seq_size, args.epochs
+layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout = args.pool_size, args.max_dilation, args.dropout
 l2, use_batch_norm, bottleneck_size = args.lr, args.use_batch_norm, args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
@@ -287,6 +288,56 @@ def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
         l += c1 * K.mean(K.abs(p[:, -1, :]))
     return l
 
+
+def loss_augmented_inference(r, z, c=1e-5, ϵ=0.1):
+    T, N = r.shape
+    Vᵗ = np.zeros((N, 3), np.float32)
+    Ṽᵗ = np.zeros((N, 3), np.float32)
+    Q = np.zeros((T, N, 3, 5), np.float32)
+    π = np.zeros((T, N), np.int8)
+    S = np.zeros(N, np.int8)
+    M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 1, 1, 1]], np.int8)
+    # M = np.array([[-1, -1, 0, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 0, 1, 1]], dtype = 'int8')
+    for t in range(T - 1, -1, -1):
+        for n in range(N):
+            rₙₜ, zₙₜ = r[t, n], z[n, t]
+            for s in [-1, 0, 1]:
+                for a in range(5):
+                    s̃ = np.where(t == T, 0, M[s + 1, a])
+                    x, y = np.sign(a - 2), np.abs(a - 2) / 2
+                    Q[t, n, s + 1, a] = x * (y * zₙₜ + (1 - y))
+                    Q[t, n, s + 1, a] += ϵ * (Ṽᵗ[n, s̃ + 1] + rₙₜ * s̃ - c * abs(s̃ - s))
+                    Vᵗ[n, s + 1] = Q[t, n, s + 1, :].max()
+        for n in range(N):
+            for i in range(3):
+                Ṽᵗ[n, i] = Vᵗ[n, i]
+    for t in range(T):
+        for n in range(N):
+            π[t, n] = Q[t, n, S[n] + 1, :].argmax()
+            S[n] = M[s + 1, π[t, n]]
+    return π
+
+
+def direct(y_true, y_pred):
+    def score(z, y):
+        a = K.sign(y - 2)
+        b = K.abs(y - 2) / 2
+        return a * (b * z + 1 - b)
+    yw, yϵ = y_true[:, :, 0], y_true[:, :, 1]
+    return score(y_pred, yw) - score(y_pred, yϵ)
+
+
+def generator(c=commission, ϵ=0.1, λ=pnl_scale):
+    x, r = 1, 1
+    r, c = λ * r, λ * c
+    if loss == 'direct':
+        z = model.predict(x)
+        yw = loss_augmented_inference(r, z, c, 0)
+        yϵ = loss_augmented_inference(r, z, c, ϵ)
+        return x, np.concatenate(yw, yϵ)
+    else:
+        return x, r
+
 # # f16 precision
 # if not use_batch_norm:
 #     K.set_floatx('float16')
@@ -303,6 +354,7 @@ logging.getLogger('tensorflow').setLevel(logging.FATAL)
 
 # set pnl loss
 keras.losses.pnl = pnl
+keras.losses.direct = direct
 
 # horovod init
 try:
@@ -411,7 +463,7 @@ if warm_start and os.path.isfile(file):
     model = load_model(file, compile=False)
 
 # pnl loss
-if loss == 'pnl':
+if loss == 'pnl' or loss == 'direct':
     w = w.reshape(*w.shape, 1)
     y = np.multiply(y, w)
     w = None
@@ -475,6 +527,12 @@ pmodel.fit(x, y, sample_weight=w,
            verbose=1,
            shuffle=False,
            validation_split=validation_split)
+# pmodel.fit_generator(
+#         generator,
+#         callbacks=callbacks,
+#         epochs=epochs, 
+#         verbose=1, 
+#         shuffle=False)
 model.save(file, include_optimizer=False)
 score = model.evaluate(x, y, sample_weight=w, batch_size=batch_size)
 print('training loss:', score)

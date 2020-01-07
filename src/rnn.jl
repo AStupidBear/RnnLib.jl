@@ -3,7 +3,7 @@
     n_jobs::Int = 1
     warm_start::Int = 0
     lr::Float32 = 1f-3
-    seq_size::Int = 0
+    sequence_size::Int = 0
     batch_size::Int = 32
     epochs::Int = 100
     layer::String = "Inception"
@@ -31,7 +31,7 @@ const rnnpy = joinpath(@__DIR__, "rnn.py")
 
 function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
     columns = something(columns, string.(1:size(x, 1)))
-    @unpack rnn, n_jobs, warm_start, lr, seq_size = m
+    @unpack rnn, n_jobs, warm_start, lr, sequence_size = m
     @unpack batch_size, epochs, layer, out_activation = m
     @unpack hidden_sizes, loss, kernel_size, kernel_sizes, pool_size = m
     @unpack max_dilation, l2, dropout, use_batch_norm, bottleneck_size = m
@@ -50,15 +50,16 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
         @pack! m = batch_size
     end
     hosts = join(pmap(n -> gethostname(), 1:max(n_jobs, nworkers())), ',')
-    dst, = dump_rnn_data(x, y, w, out_dim, out_seq)
+    dst = dump_rnn_data(x, y, w, out_dim, out_seq)
     !isempty(rnn) && write("rnn.h5", rnn)
     if isnothing(Sys.which("mpiexec"))
         exe = `python`
     else
         exe = `mpirun --host $hosts python`
     end
+    exe = `python`
     run(`$exe $rnnpy --data $dst --file rnn.h5 --warm_start $warm_start
-        --lr $lr --batch_size $batch_size --seq_size $seq_size --epochs $epochs
+        --lr $lr --batch_size $batch_size --sequence_size $sequence_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size
         --max_dilation $max_dilation --l2 $l2 --dropout $dropout --use_batch_norm $use_batch_norm
@@ -72,11 +73,11 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
 end
 
 function predict_rnn(m::RnnModel, x)
-    @unpack rnn, batch_size, out_seq, out_dim, seq_size = m
+    @unpack rnn, batch_size, out_seq, out_dim, sequence_size = m
     dst = dump_rnn_data(x, nothing, nothing, out_dim, out_seq)
     write("rnn.h5", rnn)
     run(`python $rnnpy --test 1 --data $dst --file rnn.h5
-        --batch_size $batch_size --seq_size $seq_size`)
+        --batch_size $batch_size --sequence_size $sequence_size`)
     ŷ = h5read(dst, "p")
     rm("rnn.h5")
     return ŷ

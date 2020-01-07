@@ -11,8 +11,8 @@ from keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormaliz
 from keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
 from keras.layers import GRU, CuDNNGRU, LSTM, CuDNNLSTM, TimeDistributed
 from keras.initializers import RandomNormal, RandomUniform
-from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
-from keras.utils import multi_gpu_model
+from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, ProgbarLogger
+from keras.utils import multi_gpu_model, Sequence
 from keras.utils.io_utils import HDF5Matrix
 from keras import backend as K
 from keras_adamw.optimizers_225 import AdamW
@@ -27,7 +27,9 @@ import gc
 import sys
 import math
 import os
+import copy
 import argparse
+from numba import jit
 
 print('current path %s\n' % os.getcwd())
 # parse args
@@ -37,7 +39,7 @@ parser.add_argument('--file', type=str, default='rnn.h5')
 parser.add_argument('--warm_start', type=int, default=0)
 parser.add_argument('--test', type=int, default=0)
 parser.add_argument('--lr', type=float, default=1e-3)
-parser.add_argument('--seq_size', type=int, default=0)
+parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
 parser.add_argument('--layer', type=str, default='Inception')
@@ -57,14 +59,15 @@ parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=10)
+parser.add_argument('--close_thresh', type=int, default=0.5)
 args = parser.parse_args()
 data, file, warm_start, test = args.data, args.file, args.warm_start, args.test
-lr, batch_size, seq_size, epochs = args.lr, args.batch_size, args.seq_size, args.epochs
+lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout = args.pool_size, args.max_dilation, args.dropout
 l2, use_batch_norm, bottleneck_size = args.lr, args.use_batch_norm, args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
-validation_split, patience = args.validation_split, args.patience
+validation_split, patience, close_thresh = args.validation_split, args.patience, args.close_thresh
 hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
 kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 
@@ -289,54 +292,160 @@ def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
     return l
 
 
-def loss_augmented_inference(r, z, c=1e-5, ϵ=0.1):
-    T, N = r.shape
-    Vᵗ = np.zeros((N, 3), np.float32)
-    Ṽᵗ = np.zeros((N, 3), np.float32)
-    Q = np.zeros((T, N, 3, 5), np.float32)
-    π = np.zeros((T, N), np.int8)
-    S = np.zeros(N, np.int8)
+@jit(nopython=True)
+def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=0.1, η=close_thresh):
+    N, T = r.shape[0], r.shape[1]
+    Q = np.zeros((N, T, 3, 5), np.float32)
+    π = np.zeros((N, T, 1), np.int8)
     M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 1, 1, 1]], np.int8)
     # M = np.array([[-1, -1, 0, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 0, 1, 1]], dtype = 'int8')
-    for t in range(T - 1, -1, -1):
-        for n in range(N):
-            rₙₜ, zₙₜ = r[t, n], z[n, t]
+    for n in range(N):
+        Vᵗ = np.zeros(3, np.float32)
+        Ṽᵗ = np.zeros(3, np.float32)
+        for t in range(T - 1, -1, -1):
+            rₙₜ, zₙₜ = r[n, t, 0], z[n, t, 0]
             for s in [-1, 0, 1]:
                 for a in range(5):
-                    s̃ = np.where(t == T, 0, M[s + 1, a])
-                    x, y = np.sign(a - 2), np.abs(a - 2) / 2
-                    Q[t, n, s + 1, a] = x * (y * zₙₜ + (1 - y))
-                    Q[t, n, s + 1, a] += ϵ * (Ṽᵗ[n, s̃ + 1] + rₙₜ * s̃ - c * abs(s̃ - s))
-                    Vᵗ[n, s + 1] = Q[t, n, s + 1, :].max()
-        for n in range(N):
+                    s̃ = 0 if t == T else M[s + 1, a]
+                    a_, b_ = np.sign(a - 2), abs(a - 2) / 2
+                    c_ = a_ * (b_ * zₙₜ + 1 - b_)
+                    Q[n, t, s + 1, a] = max(c_, (η + 1) / 2)
+                    Q[n, t, s + 1, a] += λ * ϵ * (Ṽᵗ[s̃ + 1] + rₙₜ * s̃ - c * abs(s̃ - s))
+                    Vᵗ[s + 1] = Q[n, t, s + 1, :].max()
             for i in range(3):
-                Ṽᵗ[n, i] = Vᵗ[n, i]
-    for t in range(T):
-        for n in range(N):
-            π[t, n] = Q[t, n, S[n] + 1, :].argmax()
-            S[n] = M[s + 1, π[t, n]]
+                Ṽᵗ[i] = Vᵗ[i]
+    for n in range(N):
+        s = 0
+        for t in range(T):
+            π[n, t, 0] = Q[n, t, s + 1, :].argmax()
+            s = M[s + 1, π[n, t, 0]]
     return π
 
 
-def direct(y_true, y_pred):
+def direct(y_true, y_pred, η=close_thresh):
     def score(z, y):
         a = K.sign(y - 2)
         b = K.abs(y - 2) / 2
-        return a * (b * z + 1 - b)
-    yw, yϵ = y_true[:, :, 0], y_true[:, :, 1]
-    return score(y_pred, yw) - score(y_pred, yϵ)
+        c = a * (b * z + 1 - b)
+        return K.maximum(c, (η + 1) / 2)
+    s1 = score(y_pred[:, :, 1], y_true[:, :, 1])
+    s2 = score(y_pred[:, :, 2], y_true[:, :, 2])
+    return s1 - s2
 
 
-def generator(c=commission, ϵ=0.1, λ=pnl_scale):
-    x, r = 1, 1
-    r, c = λ * r, λ * c
-    if loss == 'direct':
-        z = model.predict(x)
-        yw = loss_augmented_inference(r, z, c, 0)
-        yϵ = loss_augmented_inference(r, z, c, ϵ)
-        return x, np.concatenate(yw, yϵ)
-    else:
-        return x, r
+@jit(nopython=True)
+def direct_loss(r, z, λ=pnl_scale, c=commission, η=close_thresh):
+    N, T = r.shape[0], r.shape[1]
+    M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 1, 1, 1]], np.int8)
+    l = 0.0
+    for n in range(N):
+        s = 0
+        for t in range(T):
+            a_, b_ = np.sign(z[n, t, 0]), np.abs(z[n, t, 0])
+            c_ = 2 if b_ > 1 else (1 if b_ > η else 0)
+            s̃ = 0 if t == T else M[s + 1, int(a_ * c_ + 2)]
+            l += - r[n, t, 0] * s̃ + c * np.abs(s̃ - s)
+            s = s̃
+    return λ * l / N / T
+
+
+class JLSequence(Sequence):
+
+    def __init__(self, data, sequence_size, batch_size, logger):
+        if os.path.isfile(data) and os.name != 'nt':
+            x = HDF5Matrix(data, 'x').data
+            p = HDF5Matrix(data, 'p').data
+            y = HDF5Matrix(data, 'y').data[()]
+            w = HDF5Matrix(data, 'w').data[()]
+        else:
+            F, T, N = 30, 666, 2240
+            x = np.random.randn(T, N, F)
+            y = np.random.randn(T, N, 1)
+            p = np.random.randn(T, N, 1)
+            w = np.random.rand(T, N)
+        if loss == 'pnl' or loss == 'direct':
+            w = w.reshape(*w.shape, 1)
+            y = np.multiply(y, w)
+            w = None
+        else:
+            w = w / w.mean()
+        self.x, self.y = x, y
+        self.w, self.p = w, p
+        if sequence_size == 0:
+            sequence_size = x.shape[0]
+        self.sequence_size = sequence_size
+        self.batch_size = batch_size
+        self.n_sequences = math.floor(x.shape[0] / sequence_size)
+        self.n_batches = math.ceil(x.shape[1] / batch_size)
+        self.start = 0
+        self.end = self.n_sequences * self.n_batches
+        self.logger = logger
+
+    def __len__(self):
+        return self.end - self.start
+
+    def __getitem__(self, idx):
+        idx = idx + self.start
+        n, t = idx % self.n_batches, idx // self.n_batches
+        ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
+        ns = slice(self.batch_size * n, self.batch_size * (n + 1))
+        ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
+        x = self.x[ts, ns, :].swapaxes(0, 1)
+        y = self.y[ts, ns, :].swapaxes(0, 1)
+        if self.w is None:
+            w = None
+        else:
+            w = self.w[ts, ns].swapaxes(0, 1)
+        if x.dtype == 'uint8':
+            x = x / 128 - 1
+        if loss == 'direct':
+            with K.get_session().graph.as_default():
+                z = model.predict_on_batch(x)
+            self.logger.add_log('direct_loss', direct_loss(y, z))
+            yw = loss_augmented_inference(y, z, 0)
+            yϵ = loss_augmented_inference(y, z)
+            y = np.concatenate((y, yw, yϵ), axis=-1)
+            return x, y, w
+        else:
+            return x, y, w
+
+    def split(self, split_at):
+        if split_at is None:
+            return self, None
+        else:
+            trn_gen, val_gen = copy.copy(gen), copy.copy(gen)
+            val_gen.start = trn_gen.end = math.floor(len(gen) * (1 - split_at))
+            return trn_gen, val_gen
+
+    def fill_pred(self, pred):
+        npred = 0
+        for idx in range(len(self)):
+            idx = idx + self.start
+            n, t = idx % self.n_batches, idx // self.n_batches
+            ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
+            ns = slice(self.batch_size * n, self.batch_size * (n + 1))
+            ns = range(ns.start, min(ns.stop, self.x.shape[1]))
+            y = pred[npred:(npred + len(ns)), :, 0:self.p.shape[2]]
+            self.p[ts, ns, :] = y.swapaxes(0, 1)
+            npred += len(ns)
+
+
+class CustomProgbarLogger(ProgbarLogger):
+
+    def __init__(self):
+        super(CustomProgbarLogger, self).__init__()
+        self.use_steps = True
+        self.logs = {}
+
+    def on_batch_end(self, batch, logs=None):
+        logs = logs or {}
+        logs.update(self.logs)
+        super(CustomProgbarLogger, self).on_batch_end(batch, logs)
+
+    def add_log(self, k, v):
+        self.logs[k] = v
+        if hasattr(self, 'params'):
+            self.params['metrics'].append(k)
 
 # # f16 precision
 # if not use_batch_norm:
@@ -371,31 +480,12 @@ except:
     local_rank = 0
 
 # load hdf5 data or generate dummy data
-if os.path.isfile(data) and os.name != 'nt':
-    x = HDF5Matrix(data, 'x')
-    N, T, F = x.shape
-    if isrnn(layer):
-        step = math.floor(N / batch_size / world_size) * batch_size
-    else:
-        step = math.floor(N / world_size)
-    start = local_rank * step
-    end = start + step
-    x = HDF5Matrix(data, 'x', start, end)
-    p = HDF5Matrix(data, 'p', start, end)
-    y = HDF5Matrix(data, 'y', start, end).data[()]
-    w = HDF5Matrix(data, 'w', start, end).data[()]
-    w_mean = HDF5Matrix(data, 'w').data[:].mean()
-    N, T, F = x.shape
-else:
-    F, T, N = 30, 666, 2240 // world_size
-    N = N // batch_size * batch_size
-    x = np.random.randn(N, T, F)
-    y = np.random.randn(N, T, 1)
-    p = np.random.randn(N, T, 1)
-    w = np.random.rand(N, T)
-    w_mean = 1
-out_dim = y.shape[-1] if out_dim < 1 else out_dim
-out_seq = len(y.shape) == 3
+logger = CustomProgbarLogger()
+gen = JLSequence(data, sequence_size, batch_size, logger)
+trn_gen, val_gen = gen.split(validation_split)
+T, N, F = gen.x.shape
+out_dim = gen.y.shape[-1] if out_dim < 1 else out_dim
+out_seq = len(gen.y.shape) == 3
 
 # set gpu specific options and reset keras sessions
 if test == 0 and usegpu and tf.test.is_gpu_available():
@@ -411,7 +501,7 @@ elif os.getenv('USE_NGRAPH', '0') == '1':
 # test mode
 if test == 1:
     model = load_model(file, compile=False)
-    p.data[start:end] = model.predict(x, batch_size=batch_size)
+    gen.fill_pred(model.predict_generator(gen))
     exit()
 
 def DenseMod(units, activation=None):
@@ -430,8 +520,6 @@ if layer == "MLP":
     o = Flatten()(o)
 else:
     o = i = Input(shape=(None, F))
-if x.dtype == 'uint8':
-    o = Lambda(lambda z: z / 128 - 1)(o)
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or out_seq
     if layer == 'MLP':
@@ -455,20 +543,14 @@ for (l, h) in enumerate(hidden_sizes):
     elif isrnn(layer):
         o = eval(layer)(h, dropout=dropout, return_sequences=return_sequences)(o)
 o = DenseMod(out_dim, activation=out_activation)(o)
+if loss == 'direct':
+    o = concatenate([o, o, o])
 model = Model(inputs=[i], outputs=[o])
 print(model.summary())
 
 # warm start
 if warm_start and os.path.isfile(file):
     model = load_model(file, compile=False)
-
-# pnl loss
-if loss == 'pnl' or loss == 'direct':
-    w = w.reshape(*w.shape, 1)
-    y = np.multiply(y, w)
-    w = None
-else:
-    w = w / w_mean
 
 # multi-gpu
 gpu_devices = [dev.name for dev in K.get_session().list_devices()
@@ -482,7 +564,7 @@ else:
     pmodel = model
 
 # optimizer and callbacks
-callbacks = []
+callbacks = [logger]
 weight_decays = {l: l2 for l in get_weight_decays(model)}
 if use_horovod:
     # Horovod: broadcast initial variable states from rank 0 to all other processes.
@@ -500,7 +582,7 @@ if local_rank == 0:
     # callbacks.append(ReduceLROnPlateau(monitor='loss', factor=0.5, min_lr=1e-6, varbose=1))
 
 # compile
-sample_weight_mode = None if w is None or not out_seq else 'temporal'
+sample_weight_mode = None if gen.w is None or not out_seq else 'temporal'
 if 'mse' in str(loss):
     metric = ['mae']
 elif 'crossentropy' in str(loss):
@@ -514,27 +596,22 @@ pmodel.compile(loss=loss, optimizer=opt, metrics=metric, sample_weight_mode=samp
 if layer == 'Rocket' and lr >= 1e-3:
     lr_finder = LRFinder(pmodel)
     epochs_ = max(1, 100 * batch_size // N)
-    lr_finder.find(x, y, 1e-6, 1e-2, batch_size, epochs_, sample_weight=w, shuffle=False)
+    lr_finder.find_generator(gen, 1e-6, 1e-2, epochs_)
     best_lr = min(1e-3, lr_finder.get_best_lr(5))
     K.set_value(pmodel.optimizer.lr, best_lr)
     print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
-pmodel.fit(x, y, sample_weight=w,
-           batch_size=batch_size,
-           callbacks=callbacks,
-           epochs=epochs,
-           verbose=1,
-           shuffle=False,
-           validation_split=validation_split)
-# pmodel.fit_generator(
-#         generator,
-#         callbacks=callbacks,
-#         epochs=epochs, 
-#         verbose=1, 
-#         shuffle=False)
+model.fit_generator(
+        generator=trn_gen,
+        epochs=epochs,
+        verbose=1,
+        callbacks=callbacks,
+        validation_data=val_gen,
+        shuffle=True
+        )
 model.save(file, include_optimizer=False)
-score = model.evaluate(x, y, sample_weight=w, batch_size=batch_size)
+score = model.evaluate_generator(gen)
 print('training loss:', score)
 
 # convert keras to onnx

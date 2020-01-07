@@ -2,6 +2,7 @@
     rnn::Vector{UInt8} = UInt8[]
     n_jobs::Int = 1
     warm_start::Int = 0
+    optimizer::String = "AdamW"
     lr::Float32 = 1f-3
     sequence_size::Int = 0
     batch_size::Int = 32
@@ -23,6 +24,8 @@
     out_dim::Int = 0
     validation_split::Float32 = 0.2
     patience::Int = 10
+    close_thresh::Float32 = 0.5
+    eta::Float32 = 0.1
 end
 
 is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.loss)
@@ -31,11 +34,11 @@ const rnnpy = joinpath(@__DIR__, "rnn.py")
 
 function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
     columns = something(columns, string.(1:size(x, 1)))
-    @unpack rnn, n_jobs, warm_start, lr, sequence_size = m
+    @unpack rnn, n_jobs, warm_start, optimizer, lr, sequence_size = m
     @unpack batch_size, epochs, layer, out_activation = m
     @unpack hidden_sizes, loss, kernel_size, kernel_sizes, pool_size = m
     @unpack max_dilation, l2, dropout, use_batch_norm, bottleneck_size = m
-    @unpack commission, validation_split, patience = m
+    @unpack commission, validation_split, patience, close_thresh, eta = m
     out_seq, out_dim = ndims(y) == 3, size(y, 1)
     loss == "bce" && out_dim > 1 && (loss = "cce")
     loss == "bce" && out_dim == 1 && length(unique(y)) > 2 && (loss = "spcce")
@@ -57,14 +60,14 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
     else
         exe = `mpirun --host $hosts python`
     end
-    exe = `python`
-    run(`$exe $rnnpy --data $dst --file rnn.h5 --warm_start $warm_start
+    run(`$exe $rnnpy --data $dst --file rnn.h5 --warm_start $warm_start --optimizer $optimizer
         --lr $lr --batch_size $batch_size --sequence_size $sequence_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size
         --max_dilation $max_dilation --l2 $l2 --dropout $dropout --use_batch_norm $use_batch_norm
-        --bottleneck_size $bottleneck_size --commission $commission --pnl_scale $pnl_scale
-        --out_dim $out_dim --validation_split $validation_split --patience $patience`)
+        --bottleneck_size $bottleneck_size --commission $commission --pnl_scale $pnl_scale 
+        --out_dim $out_dim --validation_split $validation_split --patience $patience 
+        --close_thresh $close_thresh --eta $eta`)
     m.rnn = read("rnn.h5")
     @pack! m = out_dim, out_seq
     cp("rnn.h5", "rnn.h5.bak", force = true)

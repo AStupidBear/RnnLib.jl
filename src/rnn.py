@@ -15,7 +15,7 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, P
 from keras.utils import multi_gpu_model, Sequence
 from keras.utils.io_utils import HDF5Matrix
 from keras import backend as K
-from keras_adamw.optimizers_225 import AdamW
+from keras_adamw.optimizers_225 import AdamW, SGDW
 from keras_adamw.utils import get_weight_decays
 from keras_lr_finder import LRFinder
 import tensorflow as tf
@@ -38,6 +38,7 @@ parser.add_argument('--data', type=str, default='train.rnn')
 parser.add_argument('--file', type=str, default='rnn.h5')
 parser.add_argument('--warm_start', type=int, default=0)
 parser.add_argument('--test', type=int, default=0)
+parser.add_argument('--optimizer', type=str, default='AdamW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
@@ -59,15 +60,17 @@ parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=10)
-parser.add_argument('--close_thresh', type=int, default=0.5)
+parser.add_argument('--close_thresh', type=float, default=0.5)
+parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
-data, file, warm_start, test = args.data, args.file, args.warm_start, args.test
+data, file, warm_start, test, optimizer = args.data, args.file, args.warm_start, args.test, args.optimizer
 lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout = args.pool_size, args.max_dilation, args.dropout
 l2, use_batch_norm, bottleneck_size = args.lr, args.use_batch_norm, args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
-validation_split, patience, close_thresh = args.validation_split, args.patience, args.close_thresh
+validation_split, patience = args.validation_split, args.patience
+close_thresh, eta  = args.close_thresh, args.eta
 hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
 kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 
@@ -293,7 +296,7 @@ def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
 
 
 @jit(nopython=True)
-def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=0.1, η=close_thresh):
+def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=eta, η=close_thresh):
     N, T = r.shape[0], r.shape[1]
     Q = np.zeros((N, T, 3, 5), np.float32)
     π = np.zeros((N, T, 1), np.int8)
@@ -570,10 +573,10 @@ if use_horovod:
     # Horovod: broadcast initial variable states from rank 0 to all other processes.
     callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
     # Horovod: adjust learning rate based on number of GPUs.
-    opt = AdamW(lr * world_size, clipnorm=1, weight_decays=weight_decays)
+    opt = eval(optimizer)(lr * world_size, clipnorm=1, weight_decays=weight_decays)
     opt = hvd.DistributedOptimizer(opt)
 else:
-    opt = AdamW(lr, clipnorm=1, weight_decays=weight_decays)
+    opt = eval(optimizer)(lr, clipnorm=1, weight_decays=weight_decays)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
     callbacks.append(ModelCheckpoint(file))
@@ -593,7 +596,7 @@ else:
     metric = None
 pmodel.compile(loss=loss, optimizer=opt, metrics=metric, sample_weight_mode=sample_weight_mode)
 
-if layer == 'Rocket' and lr >= 1e-3:
+if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
     lr_finder = LRFinder(pmodel)
     epochs_ = max(1, 100 * batch_size // N)
     lr_finder.find_generator(gen, 1e-6, 1e-2, epochs_)

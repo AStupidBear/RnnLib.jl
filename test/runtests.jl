@@ -8,7 +8,7 @@ ENV["USE_GPU"] = 0
 
 cd(mktempdir())
 
-F, N, T = 3, 200, 100
+F, N, T = 3, 100, 100
 Random.seed!(1234)
 x = rand(UInt8, F, N, T)
 y = mean(x, dims = 1)
@@ -33,5 +33,5 @@ for layer in ["ResNet", "Inception", "TCN", "Rocket"]
     end
 end
 
-model = RnnClassifier(layer = "ResNet", loss = "direct", hidden_sizes = "5", epochs = 200)
+model = RnnClassifier(layer = "Rocket", loss = "direct", hidden_sizes = "5", epochs = 30, validation_split = 0)
 RnnLib.fit!(model, x, y, w)

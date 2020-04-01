@@ -5,6 +5,7 @@ filterwarnings("ignore", module='tensorflow')
 
 import time
 from tcn import TCN as _TCN
+from ind_rnn import IndRNN
 from keras.models import model_from_json, load_model, Input, Model
 from keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
 from keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormalization
@@ -18,6 +19,7 @@ from keras import backend as K
 from keras_adamw.optimizers_225 import AdamW, SGDW
 from keras_adamw.utils import get_weight_decays
 from keras_lr_finder import LRFinder
+from keras_layer_normalization import LayerNormalization
 import tensorflow as tf
 import keras
 import numpy as np
@@ -54,6 +56,7 @@ parser.add_argument('--max_dilation', type=int, default=64)
 parser.add_argument('--l2', type=float, default=0)
 parser.add_argument('--dropout', type=float, default=0)
 parser.add_argument('--use_batch_norm', type=int, default=1)
+parser.add_argument('--use_skip_conn', type=int, default=0)
 parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--commission', type=float, default=0)
 parser.add_argument('--pnl_scale', type=float, default=1)
@@ -66,8 +69,8 @@ args = parser.parse_args()
 data, file, warm_start, test, optimizer = args.data, args.file, args.warm_start, args.test, args.optimizer
 lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
-pool_size, max_dilation, dropout = args.pool_size, args.max_dilation, args.dropout
-l2, use_batch_norm, bottleneck_size = args.lr, args.use_batch_norm, args.bottleneck_size
+pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
+use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
 validation_split, patience = args.validation_split, args.patience
 close_thresh, eta  = args.close_thresh, args.eta
@@ -254,6 +257,24 @@ def TCN(filters,
     return tcn
 
 
+def ResRNN(hidden_size,
+        dropout=0.0,
+        return_sequences=True, 
+        use_layer_norm=False, 
+        use_skip_conn=False, 
+        layer='LSTM'):
+    def resrnn(i):
+        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+        if hidden_size != i.shape[-1].value:
+            i = Conv1D(hidden_size, 1, padding='causal')(i)
+        if use_layer_norm:
+            o = LayerNormalization()(o)
+        if use_skip_conn:
+            o = add([i, o])
+    return resrnn
+
+
 def CausalAveragePooling1D(pool_size):
     def pool(i):
         if pool_size > 1:
@@ -274,10 +295,6 @@ def CausalMaxPooling1D(pool_size):
             o = i
         return o
     return pool
-
-
-def isrnn(layer):
-    return layer in ['GRU', 'CuDNNGRU', 'LSTM', 'CuDNNLSTM']
 
 
 def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
@@ -543,8 +560,8 @@ for (l, h) in enumerate(hidden_sizes):
             o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
         else:
             o = DenseMod(h, activation='relu')(o)
-    elif isrnn(layer):
-        o = eval(layer)(h, dropout=dropout, return_sequences=return_sequences)(o)
+    else:
+        o = ResRNN(h, dropout=dropout, return_sequences=return_sequences, use_layer_norm=use_batch_norm, use_skip_conn=use_skip_conn, layer=layer)(o)
 o = DenseMod(out_dim, activation=out_activation)(o)
 if loss == 'direct':
     o = concatenate([o, o, o])

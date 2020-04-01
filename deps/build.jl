@@ -2,6 +2,7 @@ using PyCall: python
 
 run(`$python -m pip install tensorflow-gpu==1.14 keras==2.2.5 keras-tcn==2.8.3`)
 run(`$python -m pip install onnx onnxruntime onnxmltools ngraph_tensorflow_bridge`)
+run(`$python -m pip install keras-layer-normalization`)
 run(`$python -m pip install git+https://github.com/AStupidBear/keras-adamw.git`)
 run(`$python -m pip install git+https://github.com/AStupidBear/keras_lr_finder.git`)
 if get(ENV, "USE_MKL", "0") == "1"

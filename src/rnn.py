@@ -6,6 +6,7 @@ filterwarnings("ignore", module='tensorflow')
 import time
 from tcn import TCN as _TCN
 from ind_rnn import IndRNN
+from phased_lstm_keras import PhasedLSTM as PLSTM
 from keras.models import model_from_json, load_model, Input, Model
 from keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
 from keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormalization
@@ -15,12 +16,11 @@ from keras.initializers import RandomNormal, RandomUniform
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, ProgbarLogger
 from keras.utils import multi_gpu_model, Sequence
 from keras.utils.io_utils import HDF5Matrix
-from keras import backend as K
-from keras_adamw.optimizers_225 import AdamW, SGDW
+import tensorflow.compat.v1.keras.backend as K
+from keras_adamw.optimizers import AdamW, SGDW
 from keras_adamw.utils import get_weight_decays
 from keras_lr_finder import LRFinder
-from keras_layer_normalization import LayerNormalization
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import keras
 import numpy as np
 import onnxmltools
@@ -35,7 +35,7 @@ from numba import jit
 
 print('current path %s\n' % os.getcwd())
 # parse args
-parser = argparse.ArgumentParser(description='distributed rnn regressor')
+parser = argparse.ArgumentParser(description='rnnlib')
 parser.add_argument('--data', type=str, default='train.rnn')
 parser.add_argument('--file', type=str, default='rnn.h5')
 parser.add_argument('--warm_start', type=int, default=0)
@@ -260,19 +260,32 @@ def TCN(filters,
 def ResRNN(hidden_size,
         dropout=0.0,
         return_sequences=True, 
-        use_layer_norm=False, 
         use_skip_conn=False, 
         layer='LSTM'):
-    def resrnn(i):
+    def rnn(i):
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
         if hidden_size != i.shape[-1].value:
-            i = Conv1D(hidden_size, 1, padding='causal')(i)
-        if use_layer_norm:
-            o = LayerNormalization()(o)
+            i = Conv1D(hidden_size, 1, padding='valid')(i)
         if use_skip_conn:
             o = add([i, o])
-    return resrnn
+        return o
+    return rnn
+
+
+def ALHN(hidden_size,
+        dropout=0.0,
+        return_sequences=True, 
+        use_skip_conn=False):
+    def alhn(i):
+        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+        if hidden_size != i.shape[-1].value:
+            i = Conv1D(hidden_size, 1, padding='valid')(i)
+        if use_skip_conn:
+            o = add([i, o])
+        return o
+    return alhn
 
 
 def CausalAveragePooling1D(pool_size):
@@ -291,6 +304,18 @@ def CausalMaxPooling1D(pool_size):
         if pool_size > 1:
             o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
             o = MaxPooling1D(pool_size, strides=1, padding='valid')(o)
+        else:
+            o = i
+        return o
+    return pool
+
+
+def CausalMinPooling1D(pool_size):
+    def pool(i):
+        if pool_size > 1:
+            o = Lambda(lambda x: -K.temporal_padding(x, (pool_size - 1, 0)))(i)
+            o = MaxPooling1D(pool_size, strides=1, padding='valid')(o)
+            o = Lambda(lambda x: -x)(o)
         else:
             o = i
         return o
@@ -538,6 +563,8 @@ max_dilation = min(T // kernel_size, max_dilation)
 if layer == "MLP":
     o = i = Input(shape=(T, F))
     o = Flatten()(o)
+elif layer in ('IndRNN', 'PLSTM'):
+    o = i = Input(shape=(T, F))
 else:
     o = i = Input(shape=(None, F))
 for (l, h) in enumerate(hidden_sizes):
@@ -560,8 +587,10 @@ for (l, h) in enumerate(hidden_sizes):
             o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
         else:
             o = DenseMod(h, activation='relu')(o)
+    elif layer == 'AHLN':
+        o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     else:
-        o = ResRNN(h, dropout=dropout, return_sequences=return_sequences, use_layer_norm=use_batch_norm, use_skip_conn=use_skip_conn, layer=layer)(o)
+        o = ResRNN(h, dropout=dropout, return_sequences=return_sequences, use_skip_conn=use_skip_conn, layer=layer)(o)
 o = DenseMod(out_dim, activation=out_activation)(o)
 if loss == 'direct':
     o = concatenate([o, o, o])
@@ -644,15 +673,23 @@ if dropout == 0:
 # import numpy as np
 # import onnxruntime as rt
 # sess = rt.InferenceSession("rnn.onnx")
+# sess_options = rt.SessionOptions()
+# sess_options.enable_profiling = True
+# sess_options.intra_op_num_threads = 10
+# sess_options.execution_mode = rt.ExecutionMode.ORT_PARALLEL
+# sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+
 # input_name = sess.get_inputs()[0].name
 # input_shape = sess.get_inputs()[0].shape
+# if input_shape[1] is None:
+#     input_shape[1] = 100
 # x_onnx = np.random.randn(1000, *input_shape[1:]).astype('float32')
 # ti = time.time()
 # y_onnx = sess.run(None, {input_name: x_onnx})[0]
-# print(time.time() - ti)
+# print('onnx time: ', time.time() - ti)
 # ti = time.time()
 # y_keras = model.predict(x_onnx, batch_size=1000)
-# print(time.time() - ti)
+# print('keras time: ', time.time() - ti)
 
 # # ngraph inference
 # import numpy as np

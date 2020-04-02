@@ -111,7 +111,7 @@ def ResNet(filters,
         if use_batch_norm:
             o = BatchNormalization()(o)
         # expand channels for the sum
-        if filters != i.shape[-1].value:
+        if filters != i.shape[-1]:
             i = Conv1D(filters, 1, padding=padding)(i)
         if use_batch_norm:
             i = BatchNormalization()(i)
@@ -265,7 +265,7 @@ def ResRNN(hidden_size,
     def rnn(i):
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
-        if hidden_size != i.shape[-1].value:
+        if hidden_size != i.shape[-1]:
             i = Conv1D(hidden_size, 1, padding='valid')(i)
         if use_skip_conn:
             o = add([i, o])
@@ -280,7 +280,7 @@ def ALHN(hidden_size,
     def alhn(i):
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
-        if hidden_size != i.shape[-1].value:
+        if hidden_size != i.shape[-1]:
             i = Conv1D(hidden_size, 1, padding='valid')(i)
         if use_skip_conn:
             o = add([i, o])

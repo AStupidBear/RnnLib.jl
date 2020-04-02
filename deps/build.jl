@@ -1,9 +1,9 @@
 using PyCall: python
 
-run(`$python -m pip install tensorflow keras keras-tcn`)
+run(`$python -m pip install tensorflow keras`)
 run(`$python -m pip install keras-layer-normalization phased_lstm_keras`)
+run(`$python -m pip install git+https://github.com/philipperemy/keras-tcn.git`)
 run(`$python -m pip install git+https://github.com/OverLordGoldDragon/keras-adamw.git`)
-run(`$python -m pip install git+https://github.com/AStupidBear/keras_lr_finder.git`)
 run(`$python -m pip install onnx onnxruntime onnxmltools ngraph_tensorflow_bridge`)
 run(`$python -m pip install git+https://github.com/microsoft/onnxconverter-common.git`)
 run(`$python -m pip install git+https://github.com/onnx/keras-onnx.git`)

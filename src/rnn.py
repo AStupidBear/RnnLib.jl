@@ -5,36 +5,40 @@ filterwarnings("ignore", module='tensorflow')
 import os
 os.environ['TF_KERAS'] = '1'
 
+import argparse
+import copy
+import gc
+import logging
+import math
+import os
+import sys
 import time
-from tcn import TCN as _TCN
-from ind_rnn import IndRNN
-from phased_lstm_keras.PhasedLSTM import PhasedLSTM as PLSTM
-from tensorflow.keras.models import model_from_json, load_model
-from tensorflow.keras import Input, Model
-from tensorflow.keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
-from tensorflow.keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormalization
-from tensorflow.keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
-from tensorflow.keras.layers import GRU, LSTM, TimeDistributed
-from tensorflow.keras.initializers import RandomNormal, RandomUniform
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, ProgbarLogger
-from tensorflow.keras.utils import multi_gpu_model, Sequence
-from tensorflow.keras.utils import HDF5Matrix
-import tensorflow.compat.v1.keras.backend as K
-from keras_adamw.optimizers_v2 import AdamW, SGDW
-from keras_adamw.utils import get_weight_decays
-from lr_finder import LRFinder
-import tensorflow.compat.v1 as tf
+
 import keras
 import numpy as np
 import onnxmltools
-import logging
-import gc
-import sys
-import math
-import os
-import copy
-import argparse
+import tensorflow as tf
+import tensorflow.keras.backend as K
+from keras_adamw.optimizers_v2 import SGDW, AdamW
+from keras_adamw.utils import get_weight_decays
 from numba import jit
+from phased_lstm_keras.PhasedLSTM import PhasedLSTM as PLSTM
+from tcn import TCN as _TCN
+from tensorflow.keras import Input, Model
+from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
+                                        ProgbarLogger, ReduceLROnPlateau)
+from tensorflow.keras.initializers import RandomNormal, RandomUniform
+from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
+                                     BatchNormalization, Conv1D, Dense,
+                                     Dropout, Flatten, GlobalAveragePooling1D,
+                                     GlobalMaxPooling1D, Lambda, Layer,
+                                     MaxPooling1D, SpatialDropout1D,
+                                     TimeDistributed, add, concatenate)
+from tensorflow.keras.models import load_model, model_from_json
+from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
+
+from ind_rnn import IndRNN
+from lr_finder import LRFinder
 
 print('current path %s\n' % os.getcwd())
 # parse args
@@ -48,10 +52,10 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='ResNet')
+parser.add_argument('--layer', type=str, default='Inception')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
-parser.add_argument('--loss', type=str, default='direct')
+parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
 parser.add_argument('--pool_size', type=int, default=1)
@@ -531,13 +535,14 @@ out_dim = gen.y.shape[-1] if out_dim < 1 else out_dim
 out_seq = len(gen.y.shape) == 3
 
 # set gpu specific options and reset keras sessions
-if test == 0 and usegpu and tf.test.is_gpu_available():
-    K.get_session().close()
-    K.clear_session()
-    config = tf.ConfigProto()
+if test == 0 and usegpu and tf.config.list_physical_devices('GPU'):
+    tf.compat.v1.keras.backend.get_session().close()
+    tf.compat.v1.keras.backend.clear_session()
+    config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     config.gpu_options.visible_device_list = str(local_rank)
-    K.set_session(tf.Session(config=config))
+    sess = tf.compat.v1.Session(config=config)
+    tf.compat.v1.keras.backend.set_session(sess)
 elif os.getenv('USE_NGRAPH', '0') == '1':
     import ngraph_bridge
 
@@ -600,13 +605,12 @@ if warm_start and os.path.isfile(file):
     model = load_model(file, compile=False)
 
 # multi-gpu
-gpu_devices = [dev.name for dev in K.get_session().list_devices()
-               if ':GPU' in dev.name]
+gpu_devices = tf.config.list_physical_devices('GPU')
 if not use_horovod and len(gpu_devices) > 1:
     model.save(file, include_optimizer=False)
     with tf.device('/cpu:0'):
         model = load_model(file, compile=False)
-    pmodel = multi_gpu_model(model)
+    pmodel = multi_gpu_model(model, len(gpu_devices))
 else:
     pmodel = model
 
@@ -663,27 +667,27 @@ score = model.evaluate_generator(gen)
 print('training loss:', score)
 
 # convert keras to onnx
-if dropout == 0:
+if layer != 'Rocket':
     onnx_model = onnxmltools.convert_keras(model)
     onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
-# onnxruntime inference
-import time
-import numpy as np
-import onnxruntime as rt
-sess = rt.InferenceSession("rnn.onnx")
-sess_options = rt.SessionOptions()
-input_name = sess.get_inputs()[0].name
-input_shape = sess.get_inputs()[0].shape
-if input_shape[1] is None:
-    input_shape[1] = 100
-x_onnx = np.random.randn(1000, *input_shape[1:]).astype('float32')
-ti = time.time()
-y_onnx = sess.run(None, {input_name: x_onnx})[0]
-print('onnx time: ', time.time() - ti)
-ti = time.time()
-y_keras = model.predict(x_onnx, batch_size=1000)
-print('keras time: ', time.time() - ti)
+# # onnxruntime inference
+# import time
+# import numpy as np
+# import onnxruntime as rt
+# sess = rt.InferenceSession("rnn.onnx")
+# sess_options = rt.SessionOptions()
+# input_name = sess.get_inputs()[0].name
+# input_shape = sess.get_inputs()[0].shape
+# if input_shape[1] is None:
+#     input_shape[1] = 100
+# x_onnx = np.random.randn(1000, *input_shape[1:]).astype('float32')
+# ti = time.time()
+# y_onnx = sess.run(None, {input_name: x_onnx})[0]
+# print('onnx time: ', time.time() - ti)
+# ti = time.time()
+# y_keras = model.predict(x_onnx, batch_size=1000)
+# print('keras time: ', time.time() - ti)
 
 # # ngraph inference
 # import numpy as np

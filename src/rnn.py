@@ -2,24 +2,27 @@
 from warnings import filterwarnings
 filterwarnings("ignore", module='numpy')
 filterwarnings("ignore", module='tensorflow')
+import os
+os.environ['TF_KERAS'] = '1'
 
 import time
 from tcn import TCN as _TCN
 from ind_rnn import IndRNN
-from phased_lstm_keras import PhasedLSTM as PLSTM
-from keras.models import model_from_json, load_model, Input, Model
-from keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
-from keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormalization
-from keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
-from keras.layers import GRU, CuDNNGRU, LSTM, CuDNNLSTM, TimeDistributed
-from keras.initializers import RandomNormal, RandomUniform
-from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, ProgbarLogger
-from keras.utils import multi_gpu_model, Sequence
-from keras.utils.io_utils import HDF5Matrix
+from phased_lstm_keras.PhasedLSTM import PhasedLSTM as PLSTM
+from tensorflow.keras.models import model_from_json, load_model
+from tensorflow.keras import Input, Model
+from tensorflow.keras.layers import Layer, Lambda, Flatten, Activation, add, concatenate
+from tensorflow.keras.layers import Dense, Conv1D, Dropout, SpatialDropout1D, BatchNormalization
+from tensorflow.keras.layers import AveragePooling1D, MaxPooling1D, GlobalAveragePooling1D, GlobalMaxPooling1D
+from tensorflow.keras.layers import GRU, LSTM, TimeDistributed
+from tensorflow.keras.initializers import RandomNormal, RandomUniform
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, ProgbarLogger
+from tensorflow.keras.utils import multi_gpu_model, Sequence
+from tensorflow.keras.utils import HDF5Matrix
 import tensorflow.compat.v1.keras.backend as K
-from keras_adamw.optimizers import AdamW, SGDW
+from keras_adamw.optimizers_v2 import AdamW, SGDW
 from keras_adamw.utils import get_weight_decays
-from keras_lr_finder import LRFinder
+from lr_finder import LRFinder
 import tensorflow.compat.v1 as tf
 import keras
 import numpy as np
@@ -45,10 +48,10 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='Inception')
+parser.add_argument('--layer', type=str, default='ResNet')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
-parser.add_argument('--loss', type=str, default='mse')
+parser.add_argument('--loss', type=str, default='direct')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
 parser.add_argument('--pool_size', type=int, default=1)
@@ -444,8 +447,7 @@ class JLSequence(Sequence):
         if x.dtype == 'uint8':
             x = x / 128 - 1
         if loss == 'direct':
-            with K.get_session().graph.as_default():
-                z = model.predict_on_batch(x)
+            z = model.predict_on_batch(x)
             self.logger.add_log('direct_loss', direct_loss(y, z))
             yw = loss_augmented_inference(y, z, 0)
             yϵ = loss_augmented_inference(y, z)
@@ -505,10 +507,6 @@ if not usegpu:
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
 logging.getLogger('tensorflow').setLevel(logging.FATAL)
-
-# set pnl loss
-keras.losses.pnl = pnl
-keras.losses.direct = direct
 
 # horovod init
 try:
@@ -640,7 +638,8 @@ elif 'crossentropy' in str(loss):
         metric.append(pnl)
 else:
     metric = None
-pmodel.compile(loss=loss, optimizer=opt, metrics=metric, sample_weight_mode=sample_weight_mode)
+lossf = eval(loss) if loss in ('pnl', 'direct') else loss
+pmodel.compile(loss=lossf, optimizer=opt, metrics=metric, sample_weight_mode=sample_weight_mode)
 
 if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
     lr_finder = LRFinder(pmodel)
@@ -668,28 +667,23 @@ if dropout == 0:
     onnx_model = onnxmltools.convert_keras(model)
     onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
-# # onnxruntime inference
-# import time
-# import numpy as np
-# import onnxruntime as rt
-# sess = rt.InferenceSession("rnn.onnx")
-# sess_options = rt.SessionOptions()
-# sess_options.enable_profiling = True
-# sess_options.intra_op_num_threads = 10
-# sess_options.execution_mode = rt.ExecutionMode.ORT_PARALLEL
-# sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-# input_name = sess.get_inputs()[0].name
-# input_shape = sess.get_inputs()[0].shape
-# if input_shape[1] is None:
-#     input_shape[1] = 100
-# x_onnx = np.random.randn(1000, *input_shape[1:]).astype('float32')
-# ti = time.time()
-# y_onnx = sess.run(None, {input_name: x_onnx})[0]
-# print('onnx time: ', time.time() - ti)
-# ti = time.time()
-# y_keras = model.predict(x_onnx, batch_size=1000)
-# print('keras time: ', time.time() - ti)
+# onnxruntime inference
+import time
+import numpy as np
+import onnxruntime as rt
+sess = rt.InferenceSession("rnn.onnx")
+sess_options = rt.SessionOptions()
+input_name = sess.get_inputs()[0].name
+input_shape = sess.get_inputs()[0].shape
+if input_shape[1] is None:
+    input_shape[1] = 100
+x_onnx = np.random.randn(1000, *input_shape[1:]).astype('float32')
+ti = time.time()
+y_onnx = sess.run(None, {input_name: x_onnx})[0]
+print('onnx time: ', time.time() - ti)
+ti = time.time()
+y_keras = model.predict(x_onnx, batch_size=1000)
+print('keras time: ', time.time() - ti)
 
 # # ngraph inference
 # import numpy as np

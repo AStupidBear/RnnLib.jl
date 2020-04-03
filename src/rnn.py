@@ -15,6 +15,7 @@ import sys
 import time
 
 import keras
+import tcn
 import numpy as np
 import onnxmltools
 import tensorflow as tf
@@ -22,7 +23,6 @@ import tensorflow.keras.backend as K
 from keras_adamw.optimizers_v2 import SGDW, AdamW
 from keras_adamw.utils import get_weight_decays
 from numba import jit
-from tcn import TCN as _TCN
 from tensorflow.keras import Input, Model
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
                                         ProgbarLogger, ReduceLROnPlateau)
@@ -38,6 +38,8 @@ from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 
 from ind_rnn import IndRNN
 from lr_finder import LRFinder
+
+custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN}
 
 print('current path %s\n' % os.getcwd())
 # parse args
@@ -259,16 +261,16 @@ def TCN(filters,
         return_sequences=False,
         activation='relu',
         use_batch_norm=True):
-    def tcn(i):
+    def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
-        o = _TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout, 
+        o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout, 
                 use_batch_norm=use_batch_norm, activation=activation, return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
         else:
             o = GlobalAveragePooling1D()(o)
         return o
-    return tcn
+    return _tcn
 
 
 def ResRNN(hidden_size,
@@ -555,7 +557,7 @@ elif os.getenv('USE_NGRAPH', '0') == '1':
 
 # test mode
 if test == 1:
-    model = load_model(file, compile=False)
+    model = load_model(file, compile=False, custom_objects=custom_objects)
     gen.fill_pred(model.predict_generator(gen))
     exit()
 
@@ -594,10 +596,7 @@ for (l, h) in enumerate(hidden_sizes):
         else:
             o = DenseMod(h, activation='relu')(o)
     elif layer == 'TCN':
-        if l == 0:
-            o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
-        else:
-            o = DenseMod(h, activation='relu')(o)
+        o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'AHLN':
         o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     else:
@@ -676,30 +675,27 @@ print('training loss:', score)
 
 # convert keras to onnx
 if layer != 'Rocket':
-    onnx_model = onnxmltools.convert_keras(model, target_opset=11)
+    onnx_model = onnxmltools.convert_keras(model, target_opset=10)
     onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 if i.shape[1] is not None:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     open("rnn.tflite","wb").write(converter.convert())
 
 # inference
-import os
-import time
-import numpy as np
 import onnxruntime as ort
-import tensorflow as tf
 so = ort.SessionOptions()
 sess = ort.InferenceSession("rnn.onnx", so)
+sess.set_providers(['DnnlExecutionProvider'])
 input_name = sess.get_inputs()[0].name
 input_shape = sess.get_inputs()[0].shape
 if input_shape[1] is None:
     input_shape[1] = 666
-img = np.random.randn(10, *input_shape[1:]).astype('float32')
+img = np.random.randn(32, *input_shape[1:]).astype('float32')
 sess.run(None, {input_name: img})[0]
 ti = time.time()
 sess.run(None, {input_name: img})[0]
 print('onnx time: ', time.time() - ti)
-model = tf.keras.models.load_model('rnn.h5')
+model = load_model('rnn.h5', custom_objects=custom_objects)
 model.predict(img, batch_size=32)
 ti = time.time()
 model.predict(img, batch_size=32)
@@ -715,7 +711,6 @@ if os.path.isfile('rnn.tflite'):
     print('tflite time: ', time.time() - ti)
 
 # # ngraph inference
-# import numpy as np
 # import onnx
 # import ngraph as ng
 # from ngraph_onnx.onnx_importer.importer import import_onnx_model
@@ -726,8 +721,6 @@ if os.path.isfile('rnn.tflite'):
 # ng_comp(img)
 
 # # caffe2 inference
-# import onnx
-# import numpy as np
 # from caffe2.python.onnx.backend import run_model
 # img = np.random.randn(32, 666, 30).astype(np.float32)
 # model = onnx.load('rnn.onnx')

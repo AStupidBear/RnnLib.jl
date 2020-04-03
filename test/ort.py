@@ -23,8 +23,8 @@ model = Model(inputs=[i], outputs=[o])
 model.compile(loss='mse', optimizer='sgd')
 
 model.fit(x, y, epochs=1, batch_size=128)
-onnx_model = onnxmltools.convert_keras(model, target_opset=11)
-onnxmltools.utils.save_model(onnx_model, 'model.onnx')
+onnx_model = onnxmltools.convert_keras(model, target_opset=10)
+onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
 model.predict(x, batch_size=128)
 ti = time.time()
@@ -32,9 +32,9 @@ model.predict(x, batch_size=128)
 print('keras time: ', time.time() - ti)
 
 so = ort.SessionOptions()
-sess = ort.InferenceSession("model.onnx")
-sess.set_providers(['DnnlExecutionProvider'])
+sess = ort.InferenceSession("rnn.onnx")
 input_name = sess.get_inputs()[0].name
+# x = np.random.randn(32, 666, 30).astype('float32')
 sess.run(None, {input_name: x})[0]
 ti = time.time()
 sess.run(None, {input_name: x})[0]

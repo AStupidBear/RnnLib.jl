@@ -22,7 +22,6 @@ import tensorflow.keras.backend as K
 from keras_adamw.optimizers_v2 import SGDW, AdamW
 from keras_adamw.utils import get_weight_decays
 from numba import jit
-from phased_lstm_keras.PhasedLSTM import PhasedLSTM as PLSTM
 from tcn import TCN as _TCN
 from tensorflow.keras import Input, Model
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,

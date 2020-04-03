@@ -32,10 +32,8 @@ model.predict(x, batch_size=128)
 print('keras time: ', time.time() - ti)
 
 so = ort.SessionOptions()
-so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 sess = ort.InferenceSession("model.onnx")
-sess.set_providers(['CPUExecutionProvider'])
+sess.set_providers(['DnnlExecutionProvider'])
 input_name = sess.get_inputs()[0].name
 sess.run(None, {input_name: x})[0]
 ti = time.time()

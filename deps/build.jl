@@ -8,5 +8,5 @@ run(`$python -m pip install onnx onnxruntime onnxmltools ngraph_tensorflow_bridg
 run(`$python -m pip install git+https://github.com/microsoft/onnxconverter-common.git`)
 run(`$python -m pip install git+https://github.com/onnx/keras-onnx.git`)
 if get(ENV, "USE_MKL", "0") == "1"
-    run(`$python -m pip install pip install https://sourceforge.net/projects/bearapps/files/onnxruntime_dnnl-1.2.0-cp36-cp36m-linux_x86_64.whl`)
+    run(`$python -m pip install https://sourceforge.net/projects/bearapps/files/onnxruntime_dnnl-1.2.0-cp36-cp36m-linux_x86_64.whl`)
 end

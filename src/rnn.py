@@ -51,7 +51,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='Inception')
+parser.add_argument('--layer', type=str, default='OnnxConv')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -91,6 +91,14 @@ out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activa
 out_activation = 'tanh' if loss == 'pnl' else out_activation
 
 # custom functions
+
+def OnnxConv(*args, **kwargs):
+    def conv(o):
+        for i in range(10):
+            o = Conv1D(10, 3, padding='same')(o)
+            o = Activation('relu')(o)
+        return o
+    return conv
 
 def ResNet(filters,
         kernel_size,
@@ -569,6 +577,7 @@ elif layer in ('IndRNN', 'PLSTM'):
     o = i = Input(shape=(T, F))
 else:
     o = i = Input(shape=(None, F))
+    # o = i = Input(shape=(T, F), batch_size=batch_size)
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or out_seq
     if layer == 'MLP':
@@ -667,26 +676,43 @@ print('training loss:', score)
 
 # convert keras to onnx
 if layer != 'Rocket':
-    onnx_model = onnxmltools.convert_keras(model)
+    onnx_model = onnxmltools.convert_keras(model, target_opset=11)
     onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
+if i.shape[1] is not None:
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    open("rnn.tflite","wb").write(converter.convert())
 
-# # onnxruntime inference
-# import time
-# import numpy as np
-# import onnxruntime as rt
-# sess = rt.InferenceSession("rnn.onnx")
-# sess_options = rt.SessionOptions()
-# input_name = sess.get_inputs()[0].name
-# input_shape = sess.get_inputs()[0].shape
-# if input_shape[1] is None:
-#     input_shape[1] = 100
-# x_onnx = np.random.randn(1000, *input_shape[1:]).astype('float32')
-# ti = time.time()
-# y_onnx = sess.run(None, {input_name: x_onnx})[0]
-# print('onnx time: ', time.time() - ti)
-# ti = time.time()
-# y_keras = model.predict(x_onnx, batch_size=1000)
-# print('keras time: ', time.time() - ti)
+# inference
+import os
+import time
+import numpy as np
+import onnxruntime as ort
+import tensorflow as tf
+so = ort.SessionOptions()
+sess = ort.InferenceSession("rnn.onnx", so)
+input_name = sess.get_inputs()[0].name
+input_shape = sess.get_inputs()[0].shape
+if input_shape[1] is None:
+    input_shape[1] = 666
+img = np.random.randn(32, *input_shape[1:]).astype('float32')
+sess.run(None, {input_name: img})[0]
+ti = time.time()
+sess.run(None, {input_name: img})[0]
+print('onnx time: ', time.time() - ti)
+model = tf.keras.models.load_model('rnn.h5')
+model.predict(img, batch_size=32)
+ti = time.time()
+model.predict(img, batch_size=32)
+print('keras time: ', time.time() - ti)
+if os.path.isfile('rnn.tflite'):
+    interpreter = tf.lite.Interpreter("rnn.tflite")
+    interpreter.allocate_tensors()
+    input_tensor = interpreter.tensor(interpreter.get_input_details()[0]["index"])
+    output_tensor = interpreter.tensor(interpreter.get_output_details()[0]["index"])
+    interpreter.invoke()
+    ti = time.time()
+    interpreter.invoke()
+    print('tflite time: ', time.time() - ti)
 
 # # ngraph inference
 # import numpy as np
@@ -694,7 +720,15 @@ if layer != 'Rocket':
 # import ngraph as ng
 # from ngraph_onnx.onnx_importer.importer import import_onnx_model
 # ng_func = import_onnx_model(onnx.load('rnn.onnx'))
-# rt = ng.runtime(backend_name='CPU')
-# ng_comp = rt.computation(ng_func)
-# x_ngraph = np.random.randn(32, 666, 30).astype('float32')
-# ng_comp(x_ngraph)
+# ngrt = ng.runtime(backend_name='CPU')
+# ng_comp = ngrt.computation(ng_func)
+# img = np.random.randn(32, 666, 30).astype('float32')
+# ng_comp(img)
+
+# # caffe2 inference
+# import onnx
+# import numpy as np
+# from caffe2.python.onnx.backend import run_model
+# img = np.random.randn(32, 666, 30).astype(np.float32)
+# model = onnx.load('rnn.onnx')
+# outputs = run_model(model, [img])

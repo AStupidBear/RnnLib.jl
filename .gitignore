@@ -4,3 +4,4 @@ deps/build.log
 __pycache__
 *.h5
 *.onnx
+*.tflite

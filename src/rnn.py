@@ -51,7 +51,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='OnnxConv')
+parser.add_argument('--layer', type=str, default='Inception')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -694,7 +694,7 @@ input_name = sess.get_inputs()[0].name
 input_shape = sess.get_inputs()[0].shape
 if input_shape[1] is None:
     input_shape[1] = 666
-img = np.random.randn(32, *input_shape[1:]).astype('float32')
+img = np.random.randn(10, *input_shape[1:]).astype('float32')
 sess.run(None, {input_name: img})[0]
 ti = time.time()
 sess.run(None, {input_name: img})[0]

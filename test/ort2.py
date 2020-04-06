@@ -6,7 +6,6 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-import keras
 import numpy as np
 import onnxmltools
 import onnxruntime as ort
@@ -28,7 +27,8 @@ model = Model(inputs=[i], outputs=[o])
 model.compile(loss='mse', optimizer='sgd')
 
 model.fit(x, y, epochs=1, batch_size=32)
-onnx_model = onnxmltools.convert_keras(model, target_opset=10)
+model.save('rnn.h5')
+onnx_model = onnxmltools.convert_keras(model)
 onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
 model.predict(x, batch_size=32)

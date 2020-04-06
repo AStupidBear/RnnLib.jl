@@ -17,7 +17,6 @@ import math
 import sys
 import time
 
-import keras
 import tcn
 import numpy as np
 import onnxmltools

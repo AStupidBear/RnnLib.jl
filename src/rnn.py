@@ -1,16 +1,19 @@
 #!/usr/bin/env python
-from warnings import filterwarnings
-filterwarnings("ignore", module='numpy')
-filterwarnings("ignore", module='tensorflow')
 import os
 os.environ['TF_KERAS'] = '1'
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+usegpu = os.getenv('USE_GPU', '1') == '1'
+if not usegpu:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
 
 import argparse
 import copy
 import gc
-import logging
 import math
-import os
 import sys
 import time
 
@@ -39,9 +42,12 @@ from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 from ind_rnn import IndRNN
 from lr_finder import LRFinder
 
+# config
+config = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session(config=config))
 custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN}
-
 print('current path %s\n' % os.getcwd())
+
 # parse args
 parser = argparse.ArgumentParser(description='rnnlib')
 parser.add_argument('--data', type=str, default='train.rnn')
@@ -53,7 +59,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='Inception')
+parser.add_argument('--layer', type=str, default='AHLN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -97,7 +103,7 @@ out_activation = 'tanh' if loss == 'pnl' else out_activation
 def OnnxConv(*args, **kwargs):
     def conv(o):
         for i in range(10):
-            o = Conv1D(10, 3, padding='same')(o)
+            o = Conv1D(10, 3, padding='causal')(o)
             o = Activation('relu')(o)
         return o
     return conv
@@ -108,21 +114,19 @@ def ResNet(filters,
         padding='causal',
         dropout=0.0,
         return_sequences=False,
-        activation='relu',
         use_batch_norm=True):
+    def resnet_module(i, factor):
+        o = Conv1D(filters, factor * kernel_size - 1, padding=padding)(i)
+        if use_batch_norm:
+            o = BatchNormalization()(o)
+        o = Activation('relu')(o)
+        if dropout > 0:
+            o = SpatialDropout1D(dropout)(o)
+        return o
     def resnet(i):
-        o = Conv1D(filters, 3 * kernel_size - 1, padding=padding)(i)
-        if use_batch_norm:
-            o = BatchNormalization()(o)
-        o = Activation('relu')(o)
-        if dropout > 0:
-            o = SpatialDropout1D(dropout)(o)
-        o = Conv1D(filters, 2 * kernel_size - 1, padding=padding)(o)
-        if use_batch_norm:
-            o = BatchNormalization()(o)
-        o = Activation('relu')(o)
-        if dropout > 0:
-            o = SpatialDropout1D(dropout)(o)
+        o = resnet_module(i, 3)
+        o = resnet_module(o, 2)
+        o = resnet_module(o, 1)
         o = Conv1D(filters, kernel_size, padding=padding)(o)
         if use_batch_norm:
             o = BatchNormalization()(o)
@@ -132,8 +136,8 @@ def ResNet(filters,
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
-        o = Activation(activation)(o)
-        if activation != 'linear' and dropout > 0:
+        o = Activation('relu')(o)
+        if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
@@ -145,14 +149,13 @@ def ResNet(filters,
 
 def MLP(hidden_size,
         dropout=0.0,
-        activation='relu',
         use_batch_norm=True):
     def mlp(i):
         o = Dense(hidden_size)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation(activation)(o)
-        if activation != 'linear' and dropout > 0:
+        o = Activation('relu')(o)
+        if dropout > 0:
             o = Dropout(dropout)(o)
         return o
     return mlp
@@ -160,15 +163,14 @@ def MLP(hidden_size,
 
 def Conv(filters,
         dropout=0.0,
-        activation='relu',
         use_batch_norm=True,
         return_sequences=False):
     def conv(i):
         o = Conv1D(filters, 1, padding='causal')(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation(activation)(o)
-        if activation != 'linear' and dropout > 0:
+        o = Activation('relu')(o)
+        if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if not return_sequences:
             o = Lambda(lambda x: x[:, -1, :])(o)
@@ -217,7 +219,6 @@ def Inception(filters,
         padding='causal',
         dropout=0.0,
         return_sequences=False,
-        activation='relu',
         use_batch_norm=True,
         bottleneck_size=32):
     def inception_module(i):
@@ -231,7 +232,7 @@ def Inception(filters,
         o = concatenate(conv_list)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation(activation)(o)
+        o = Activation('relu')(o)
         return o
     def inception(i):
         o = inception_module(i)
@@ -241,8 +242,8 @@ def Inception(filters,
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
-        o = Activation(activation)(o)
-        if activation != 'linear' and dropout > 0:
+        o = Activation('relu')(o)
+        if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
@@ -264,7 +265,7 @@ def TCN(filters,
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout, 
-                use_batch_norm=use_batch_norm, activation=activation, return_sequences=True)(i)
+                    use_batch_norm=use_batch_norm, activation=activation, return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
         else:
@@ -275,33 +276,53 @@ def TCN(filters,
 
 def ResRNN(hidden_size,
         dropout=0.0,
-        return_sequences=True, 
-        use_skip_conn=False, 
+        return_sequences=True,
+        use_skip_conn=False,
         layer='LSTM'):
     def rnn(i):
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
         o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
         if hidden_size != i.shape[-1]:
-            i = Conv1D(hidden_size, 1, padding='valid')(i)
+            i = DenseMod(hidden_size)(i)
         if use_skip_conn:
             o = add([i, o])
         return o
     return rnn
 
 
-def ALHN(hidden_size,
+def AHLN(hidden_size,
+        max_pool_size,
         dropout=0.0,
-        return_sequences=True, 
+        return_sequences=True,
+        use_batch_norm=True,
         use_skip_conn=False):
-    def alhn(i):
-        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
-        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+    def ahln(i):
+        pool_list = [i]
+        for pool_size in [4**n for n in range(10) if 4**n <= max_pool_size]:
+            pool_list.append(CausalAveragePooling1D(pool_size)(i))
+            pool_list.append(CausalMaxPooling1D(pool_size)(i))
+            pool_list.append(CausalMinPooling1D(pool_size)(i))
+        o = concatenate(pool_list)
+        for n in range(2):
+            o = DenseMod(hidden_size)(o)
+            if use_batch_norm:
+                o = BatchNormalization()(o)
+            o = Activation('relu')(o)
+            if dropout > 0:
+                o = SpatialDropout1D(dropout)(o)
         if hidden_size != i.shape[-1]:
-            i = Conv1D(hidden_size, 1, padding='valid')(i)
+            i = DenseMod(hidden_size)(i)
+        if use_batch_norm:
+            i = BatchNormalization()(i)
         if use_skip_conn:
             o = add([i, o])
+        o = Activation('relu')(o)
+        if dropout > 0:
+            o = SpatialDropout1D(dropout)(o)
+        if not return_sequences:
+            o = GlobalAveragePooling1D()(o)
         return o
-    return alhn
+    return ahln  
 
 
 def CausalAveragePooling1D(pool_size):
@@ -465,9 +486,9 @@ class JLSequence(Sequence):
             yw = loss_augmented_inference(y, z, 0)
             yϵ = loss_augmented_inference(y, z)
             y = np.concatenate((y, yw, yϵ), axis=-1)
-            return x, y, w
+            return x, y, [w]
         else:
-            return x, y, w
+            return x, y, [w]
 
     def split(self, split_at):
         if split_at is None:
@@ -512,15 +533,6 @@ class CustomProgbarLogger(ProgbarLogger):
 #     K.set_floatx('float16')
 #     K.set_epsilon(1e-4)
 
-# setenv
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-usegpu = os.getenv('USE_GPU', '1') == '1'
-if not usegpu:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
-logging.getLogger('tensorflow').setLevel(logging.FATAL)
-
 # horovod init
 try:
     import horovod.keras as hvd
@@ -564,7 +576,7 @@ if test == 1:
 def DenseMod(units, activation=None):
     def densemod(i):
         if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
-            return Conv1D(units, 1, padding='same', activation=activation)(i)
+            return Conv1D(units, 1, padding='causal', activation=activation)(i)
         else:
             return Dense(units, activation=activation)(i)
     return densemod
@@ -577,9 +589,10 @@ if layer == "MLP":
     o = Flatten()(o)
 elif layer in ('IndRNN', 'PLSTM'):
     o = i = Input(shape=(T, F))
+elif os.getenv('USE_TFLITE', '0') == '1':
+    o = i = Input(shape=(T, F), batch_size=batch_size)
 else:
     o = i = Input(shape=(None, F))
-    # o = i = Input(shape=(T, F), batch_size=batch_size)
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or out_seq
     if layer == 'MLP':
@@ -598,7 +611,7 @@ for (l, h) in enumerate(hidden_sizes):
     elif layer == 'TCN':
         o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'AHLN':
-        o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
+        o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, use_skip_conn=use_skip_conn, return_sequences=return_sequences)(o)
     else:
         o = ResRNN(h, dropout=dropout, return_sequences=return_sequences, use_skip_conn=use_skip_conn, layer=layer)(o)
 o = DenseMod(out_dim, activation=out_activation)(o)
@@ -609,14 +622,14 @@ print(model.summary())
 
 # warm start
 if warm_start and os.path.isfile(file):
-    model = load_model(file, compile=False)
+    model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
 
 # multi-gpu
 gpu_devices = tf.config.list_physical_devices('GPU')
 if not use_horovod and len(gpu_devices) > 1:
     model.save(file, include_optimizer=False)
     with tf.device('/cpu:0'):
-        model = load_model(file, compile=False)
+        model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
     pmodel = multi_gpu_model(model, len(gpu_devices))
 else:
     pmodel = model
@@ -661,41 +674,44 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
     print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
-model.fit_generator(
-        generator=trn_gen,
-        epochs=epochs,
-        verbose=1,
-        callbacks=callbacks,
-        validation_data=val_gen,
-        shuffle=True
-        )
+model.fit(
+    x=trn_gen,
+    epochs=epochs,
+    verbose=1,
+    callbacks=callbacks,
+    validation_data=val_gen,
+    shuffle=True
+)
 model.save(file, include_optimizer=False)
-score = model.evaluate_generator(gen)
+score = model.evaluate(gen)
 print('training loss:', score)
 
 # convert keras to onnx
-if layer != 'Rocket':
-    onnx_model = onnxmltools.convert_keras(model, target_opset=10)
-    onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 if i.shape[1] is not None:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     open("rnn.tflite","wb").write(converter.convert())
+if layer == 'Rocket':
+    exit()
+onnx_model = onnxmltools.convert_keras(model)
+onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
 # inference
 import onnxruntime as ort
 so = ort.SessionOptions()
+so.intra_op_num_threads = 1
 sess = ort.InferenceSession("rnn.onnx", so)
-sess.set_providers(['DnnlExecutionProvider'])
 input_name = sess.get_inputs()[0].name
 input_shape = sess.get_inputs()[0].shape
 if input_shape[1] is None:
     input_shape[1] = 666
 img = np.random.randn(32, *input_shape[1:]).astype('float32')
-sess.run(None, {input_name: img})[0]
-ti = time.time()
-sess.run(None, {input_name: img})[0]
-print('onnx time: ', time.time() - ti)
-model = load_model('rnn.h5', custom_objects=custom_objects)
+for provider in sess.get_providers():
+    sess.set_providers([provider])
+    sess.run(None, {input_name: img})[0]
+    ti = time.time()
+    sess.run(None, {input_name: img})[0]
+    print('onnx-' + provider, 'time: ', time.time() - ti)
+model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
 model.predict(img, batch_size=32)
 ti = time.time()
 model.predict(img, batch_size=32)

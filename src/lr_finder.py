@@ -93,11 +93,13 @@ class LRFinder:
         callback = LambdaCallback(on_batch_end=lambda batch,
                                                       logs: self.on_batch_end(batch, logs))
 
-        self.model.fit_generator(generator=generator,
-                                 epochs=epochs,
-                                 steps_per_epoch=steps_per_epoch,
-                                 callbacks=[callback],
-                                 **kw_fit)
+        self.model.fit(
+            x=generator,
+            epochs=epochs,
+            steps_per_epoch=steps_per_epoch,
+            callbacks=[callback],
+            **kw_fit
+        )
 
         # Restore the weights to the state before model fitting
         self.model.load_weights('tmp.h5')

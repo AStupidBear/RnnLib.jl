@@ -12,28 +12,28 @@ import onnxmltools
 import onnxruntime as ort
 import tensorflow as tf
 from tensorflow.keras import Input, Model
-from tensorflow.keras.layers import Conv1D, Dense
+from tensorflow.keras.layers import Conv2D, Dense
 
 config = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
 tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session(config=config))
 
-x = np.random.randn(128, 1000, 30).astype('float32')
-y = np.random.randn(128, 1000, 1).astype('float32')
+x = np.random.randn(32, 256, 256, 30).astype('float32')
+y = np.random.randn(32, 256, 256, 1).astype('float32')
 
-o = i = Input((1000, x.shape[-1]), batch_size=128)
+o = i = Input(x.shape[1:], batch_size=32)
 for n in range(5):
-    o = Conv1D(64, 3, activation='relu', padding='same')(o)
-o = Conv1D(1, 3, padding='same')(o)
+    o = Conv2D(64, (3, 3), activation='relu', padding='same')(o)
+o = Conv2D(1, (3, 3), padding='same')(o)
 model = Model(inputs=[i], outputs=[o])
 model.compile(loss='mse', optimizer='sgd')
 
-model.fit(x, y, epochs=1, batch_size=128)
+model.fit(x, y, epochs=1, batch_size=32)
 onnx_model = onnxmltools.convert_keras(model, target_opset=10)
 onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
-model.predict(x, batch_size=128)
+model.predict(x, batch_size=32)
 ti = time.time()
-model.predict(x, batch_size=128)
+model.predict(x, batch_size=32)
 print('keras time: ', time.time() - ti)
 
 so = ort.SessionOptions()
@@ -46,5 +46,3 @@ for provider in sess.get_providers():
     ti = time.time()
     sess.run(None, {input_name: x})[0]
     print('onnx-' + provider, 'time: ', time.time() - ti)
-
-model.save('abc', save_format='tf')

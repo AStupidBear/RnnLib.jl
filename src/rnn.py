@@ -42,8 +42,8 @@ from ind_rnn import IndRNN
 from lr_finder import LRFinder
 
 # config
-config = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
-tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session(config=config))
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
 custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN}
 print('current path %s\n' % os.getcwd())
 
@@ -58,7 +58,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='AHLN')
+parser.add_argument('--layer', type=str, default='IndRNN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -686,11 +686,11 @@ score = model.evaluate(gen)
 print('training loss:', score)
 
 # convert keras to onnx
+if layer in ('Rocket', 'IndRNN'):
+    exit()
 if i.shape[1] is not None:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     open("rnn.tflite","wb").write(converter.convert())
-if layer == 'Rocket':
-    exit()
 onnx_model = onnxmltools.convert_keras(model)
 onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
@@ -698,6 +698,7 @@ onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 import onnxruntime as ort
 so = ort.SessionOptions()
 so.intra_op_num_threads = 1
+so.inter_op_num_threads = 1
 sess = ort.InferenceSession("rnn.onnx", so)
 input_name = sess.get_inputs()[0].name
 input_shape = sess.get_inputs()[0].shape
@@ -711,9 +712,9 @@ for provider in sess.get_providers():
     sess.run(None, {input_name: img})[0]
     print('onnx-' + provider, 'time: ', time.time() - ti)
 model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
-model.predict(img, batch_size=32)
+model(img, training=False)
 ti = time.time()
-model.predict(img, batch_size=32)
+model(img, training=False)
 print('keras time: ', time.time() - ti)
 if os.path.isfile('rnn.tflite'):
     interpreter = tf.lite.Interpreter("rnn.tflite")

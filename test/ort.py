@@ -13,8 +13,8 @@ import tensorflow as tf
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import Conv1D, Dense
 
-config = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
-tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session(config=config))
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
 
 x = np.random.randn(128, 1000, 30).astype('float32')
 y = np.random.randn(128, 1000, 1).astype('float32')
@@ -31,13 +31,14 @@ model.save('rnn.h5')
 onnx_model = onnxmltools.convert_keras(model)
 onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
 
-model.predict(x, batch_size=128)
+model(x, training=False)
 ti = time.time()
-model.predict(x, batch_size=128)
+model(x, training=False)
 print('keras time: ', time.time() - ti)
 
 so = ort.SessionOptions()
 so.intra_op_num_threads = 1
+so.inter_op_num_threads = 1
 sess = ort.InferenceSession("rnn.onnx", so)
 for provider in sess.get_providers():
     sess.set_providers([provider])

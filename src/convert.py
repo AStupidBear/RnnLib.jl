@@ -1,5 +1,6 @@
 # convert model
 import os
+import sys
 import time
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -15,9 +16,12 @@ from tensorflow.python.platform import gfile
 
 from ind_rnn import IndRNN
 
+h5 = 'rnn.h5' if len(sys.argv) == 1 else sys.argv[1]
+name = h5.split('.')[0]
+
 # load model
 custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN}
-model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
+model = load_model(h5, compile=False, custom_objects=custom_objects)
 input_shape = model.inputs[0].shape.as_list()
 input_shape[0] = input_shape[0] if input_shape[0] else 32
 input_shape[1] = input_shape[1] if input_shape[1] else 666
@@ -32,11 +36,11 @@ print('keras time: ', time.time() - ti)
 # tf inference
 keras2tf = os.path.join(os.path.dirname(
     os.path.abspath(__file__)), 'keras2tf.py')
-os.system('CUDA_VISIBLE_DEVICES=-1 python %s --input_model=rnn.h5 --output_model=rnn.pb --output_nodes_prefix=output_ 2> /dev/null' % keras2tf)
-os.system('CUDA_VISIBLE_DEVICES=-1 python -m tensorflow.python.tools.optimize_for_inference --input=rnn.pb --output=rnn.pb --input_names=input_1 --output_names=output_1 2> /dev/null')
+os.system('python %s --input_model=%s.h5 --output_model=%s.pb --output_nodes_prefix=output_' % (keras2tf, name, name))
+os.system('python -m tensorflow.python.tools.optimize_for_inference --input=%s.pb --output=%s.pb --input_names=input_1 --output_names=output_1' % (name, name))
 tf.compat.v1.reset_default_graph()
 with tf.compat.v1.Session() as sess:
-    with gfile.GFile('rnn.pb', 'rb') as f:
+    with gfile.GFile(name + '.pb', 'rb') as f:
         graph_def = tf.compat.v1.GraphDef()
         graph_def.ParseFromString(f.read())
         sess.graph.as_default()
@@ -50,8 +54,8 @@ with tf.compat.v1.Session() as sess:
 # tflite inference
 try:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    open('rnn.tflite', 'wb').write(converter.convert())
-    interpreter = tf.lite.Interpreter('rnn.tflite')
+    open(name + '.tflite', 'wb').write(converter.convert())
+    interpreter = tf.lite.Interpreter(name + '.tflite')
     interpreter.allocate_tensors()
     input_tensor = interpreter.tensor(
         interpreter.get_input_details()[0]['index'])
@@ -67,11 +71,11 @@ except Exception as e:
 # onnx inference
 try:
     onnx_model = onnxmltools.convert_keras(model)
-    onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
+    onnxmltools.utils.save_model(onnx_model, name + '.onnx')
     so = ort.SessionOptions()
     so.intra_op_num_threads = 1
     so.inter_op_num_threads = 1
-    sess = ort.InferenceSession('rnn.onnx', so)
+    sess = ort.InferenceSession(name + '.onnx', so)
     input_name = sess.get_inputs()[0].name
     for provider in sess.get_providers():
         sess.set_providers([provider])

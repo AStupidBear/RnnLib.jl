@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 import os
-os.environ['TF_KERAS'] = '1'
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 usegpu = os.getenv('USE_GPU', '1') == '1'
 if not usegpu:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
 
 import argparse
@@ -15,11 +14,9 @@ import copy
 import gc
 import math
 import sys
-import time
 
 import tcn
 import numpy as np
-import onnxmltools
 import tensorflow as tf
 import tensorflow.keras.backend as K
 from keras_adamw.optimizers_v2 import SGDW, AdamW
@@ -35,9 +32,8 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      GlobalMaxPooling1D, Lambda, Layer,
                                      MaxPooling1D, SpatialDropout1D,
                                      TimeDistributed, add, concatenate)
-from tensorflow.keras.models import load_model, model_from_json
+from tensorflow.keras.models import load_model
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
-from tensorflow.python.platform import gfile
 
 from ind_rnn import IndRNN
 from lr_finder import LRFinder
@@ -591,7 +587,7 @@ def DenseMod(units, activation=None):
 # Expected input batch shape: (N, T, F)
 pool_size = min(T // 3, pool_size)
 max_dilation = min(T // kernel_size, max_dilation)
-if layer == "MLP":
+if layer == 'MLP':
     o = i = Input(shape=(T, F))
     o = Flatten()(o)
 elif layer in ('IndRNN', 'PLSTM'):
@@ -604,7 +600,7 @@ for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or out_seq
     if layer == 'MLP':
         o = MLP(h, dropout=dropout, use_batch_norm=use_batch_norm)(o)
-    elif layer == "Conv":
+    elif layer == 'Conv':
         o = Conv(h, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'ResNet':
         o = ResNet(h, kernel_size, pool_size, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)

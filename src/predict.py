@@ -14,3 +14,5 @@ sess = rt.InferenceSession("rnn.onnx")
 input_name = sess.get_inputs()[0].name
 input_shape = sess.get_inputs()[0].shape
 y = sess.run(None, {input_name: x})[0]
+
+all_tensors = [tensor for op in tf.get_default_graph().get_operations() for tensor in op.values()]

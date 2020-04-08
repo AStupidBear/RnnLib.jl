@@ -7,7 +7,7 @@
     sequence_size::Int = 0
     batch_size::Int = 32
     epochs::Int = 100
-    layer::String = "Inception"
+    layer::String = "AHLN"
     out_activation::String = "linear"
     hidden_sizes::String = "128"
     loss::String = "mse"
@@ -17,7 +17,8 @@
     max_dilation::Int = 64
     l2::Float32 = 0f-4
     dropout::Float32 = 0
-    use_batch_norm::Int = 1
+    use_batch_norm::Int = 0
+    use_skip_conn::Int = 0
     bottleneck_size::Int = 32
     commission::Float32 = 2f-4
     out_seq::Bool = true
@@ -35,9 +36,9 @@ const rnnpy = joinpath(@__DIR__, "rnn.py")
 function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
     columns = something(columns, string.(1:size(x, 1)))
     @unpack rnn, n_jobs, warm_start, optimizer, lr, sequence_size = m
-    @unpack batch_size, epochs, layer, out_activation = m
-    @unpack hidden_sizes, loss, kernel_size, kernel_sizes, pool_size = m
-    @unpack max_dilation, l2, dropout, use_batch_norm, bottleneck_size = m
+    @unpack batch_size, epochs, layer, out_activation, hidden_sizes = m
+    @unpack loss, kernel_size, kernel_sizes, pool_size, max_dilation = m
+    @unpack l2, dropout, use_batch_norm, use_skip_conn, bottleneck_size = m
     @unpack commission, validation_split, patience, close_thresh, eta = m
     out_seq, out_dim = ndims(y) == 3, size(y, 1)
     loss == "bce" && out_dim > 1 && (loss = "cce")
@@ -65,9 +66,9 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
         --loss $loss --kernel_size $kernel_size --kernel_sizes $kernel_sizes --pool_size $pool_size
         --max_dilation $max_dilation --l2 $l2 --dropout $dropout --use_batch_norm $use_batch_norm
-        --bottleneck_size $bottleneck_size --commission $commission --pnl_scale $pnl_scale 
-        --out_dim $out_dim --validation_split $validation_split --patience $patience 
-        --close_thresh $close_thresh --eta $eta`)
+        --use_skip_conn $use_skip_conn --bottleneck_size $bottleneck_size --commission $commission
+        --pnl_scale $pnl_scale --out_dim $out_dim --validation_split $validation_split 
+        --patience $patience --close_thresh $close_thresh --eta $eta`)
     m.rnn = read("rnn.h5")
     @pack! m = out_dim, out_seq
     cp("rnn.h5", "rnn.h5.bak", force = true)

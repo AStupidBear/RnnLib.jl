@@ -37,6 +37,7 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      TimeDistributed, add, concatenate)
 from tensorflow.keras.models import load_model, model_from_json
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
+from tensorflow.python.platform import gfile
 
 from ind_rnn import IndRNN
 from lr_finder import LRFinder
@@ -58,7 +59,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='IndRNN')
+parser.add_argument('--layer', type=str, default='LSTM')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -685,7 +686,10 @@ model.save(file, include_optimizer=False)
 score = model.evaluate(gen)
 print('training loss:', score)
 
-# convert keras to onnx
+# convert model
+keras2tf = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'keras2tf.py')
+os.system('CUDA_VISIBLE_DEVICES=-1 python %s --input_model=rnn.h5 --output_model=rnn.pb --output_nodes_prefix=output_ 2> /dev/null' % keras2tf)
+os.system('CUDA_VISIBLE_DEVICES=-1 python -m tensorflow.python.tools.optimize_for_inference --input=rnn.pb --output=rnn_opt.pb --input_names=input_1 --output_names=output_1 2> /dev/null')
 if layer in ('Rocket', 'IndRNN'):
     exit()
 if i.shape[1] is not None:
@@ -725,6 +729,17 @@ if os.path.isfile('rnn.tflite'):
     ti = time.time()
     interpreter.invoke()
     print('tflite time: ', time.time() - ti)
+tf.compat.v1.reset_default_graph()
+with tf.compat.v1.Session() as sess:
+    with gfile.GFile('rnn_opt.pb','rb') as f:
+        graph_def = tf.compat.v1.GraphDef()
+        graph_def.ParseFromString(f.read())
+        sess.graph.as_default()
+        tensor_input, tensor_output = tf.import_graph_def(graph_def, return_elements=['input_1:0', 'output_1:0'])
+    sess.run(tensor_output, {tensor_input: img})
+    ti = time.time()
+    sess.run(tensor_output, {tensor_input: img})
+    print('tf time: ', time.time() - ti)
 
 # # ngraph inference
 # import onnx

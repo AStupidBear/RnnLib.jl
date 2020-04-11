@@ -689,5 +689,3 @@ pmodel.fit(
     workers=0
 )
 model.save(file, include_optimizer=False)
-score = pmodel.evaluate(gen)
-print('training loss:', score)

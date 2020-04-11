@@ -538,7 +538,7 @@ class CustomProgbarLogger(ProgbarLogger):
 
 # horovod init
 try:
-    import horovod.keras as hvd
+    import horovod.tensorflow.keras as hvd
     hvd.init()
     world_size = hvd.size()
     use_horovod = world_size > 1

@@ -680,9 +680,11 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
 model.fit(
     x=trn_gen,
     epochs=epochs,
+    steps_per_epoch=len(gen) // hvd.size(),
     verbose=1,
     callbacks=callbacks,
     validation_data=val_gen,
+    validation_steps=len(val_gen) // hvd.size(),
     shuffle=True,
     workers=0
 )

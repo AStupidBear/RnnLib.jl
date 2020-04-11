@@ -677,7 +677,7 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
     print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
-model.fit(
+pmodel.fit(
     x=trn_gen,
     epochs=epochs,
     steps_per_epoch=len(gen) // hvd.size(),
@@ -689,5 +689,5 @@ model.fit(
     workers=0
 )
 model.save(file, include_optimizer=False)
-score = model.evaluate(gen)
+score = pmodel.evaluate(gen)
 print('training loss:', score)

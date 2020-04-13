@@ -1,17 +1,19 @@
 #!/usr/bin/env python
-import os
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-usegpu = os.getenv('USE_GPU', '1') == '1'
-if not usegpu:
-    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
+if True:
+    import os
+    os.environ['MKL_NUM_THREADS'] = '1'
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    usegpu = os.getenv('USE_GPU', '1') == '1'
+    if not usegpu:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
 
 import argparse
 import copy
 import gc
 import math
+import re
 import sys
 
 import numpy as np
@@ -35,12 +37,14 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      TimeDistributed, add, concatenate)
 from tensorflow.keras.models import load_model
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
+from tensorflow.python.client import device_lib
 
 from ind_rnn import IndRNN
 from lr_finder import LRFinder
 
 # config
-tf.compat.v1.disable_v2_behavior()
+# if os.getenv('TF_EAGER', '0') == '0':
+#     tf.compat.v1.disable_v2_behavior()
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
 custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
@@ -54,12 +58,12 @@ parser.add_argument('--ckpt_fmt', default='ckpt-{epoch}.h5')
 parser.add_argument('--log_dir', default='logs')
 parser.add_argument('--warm_start', type=int, default=1)
 parser.add_argument('--test', type=int, default=0)
-parser.add_argument('--optimizer', type=str, default='AdamW')
+parser.add_argument('--optimizer', type=str, default='SGDW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=10)
-parser.add_argument('--layer', type=str, default='IndRNN')
+parser.add_argument('--layer', type=str, default='AHLN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -100,6 +104,15 @@ loss = 'sparse_categorical_crossentropy' if loss == 'spcce' else loss
 out_activation = 'sigmoid' if loss == 'binary_crossentropy' else out_activation
 out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activation
 out_activation = 'tanh' if loss == 'pnl' else out_activation
+
+def is_volta():
+    for dev in device_lib.list_local_devices():
+        m = re.findall('capability: ([0-9\.]+)', dev.physical_device_desc)
+        if len(m) > 0:
+            capability = float(m[0])
+            if capability > 7:
+                return True
+    return False
 
 ###################################################################################################
 # custom architectures
@@ -471,10 +484,10 @@ class JLSequence(Sequence):
             self.w = HDF5Matrix(data_path, 'w').data
         else:
             F, T, N = 30, 666, 2240
-            self.x = np.random.randn(T, N, F).astype('float32')
-            self.y = np.random.randn(T, N, 1).astype('float32')
-            self.p = np.random.randn(T, N, 1).astype('float32')
-            self.w = np.random.rand(T, N).astype('float32')
+            self.x = np.random.randn(T, N, F)
+            self.y = np.mean(self.x, axis = 2).reshape(T, N, -1)
+            self.p = np.random.randn(T, N, 1)
+            self.w = np.random.rand(T, N)
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
@@ -560,11 +573,6 @@ class CustomProgbarLogger(ProgbarLogger):
 ###################################################################################################
 # configuration
 
-# f16 precision
-if not use_batch_norm:
-    K.set_floatx('float16')
-    K.set_epsilon(1e-4)
-
 # horovod init
 try:
     import horovod.tensorflow.keras as hvd
@@ -584,6 +592,9 @@ if test == 0 and usegpu and gpus:
         gpus[local_rank % len(gpus)], 'GPU')
     for gpu in gpus:
         tf.config.experimental.set_memory_growth(gpu, True)
+    # mixed precision
+    if is_volta() and tf.executing_eagerly():
+        tf.keras.mixed_precision.experimental.set_policy('mixed_float16')
 elif os.getenv('USE_NGRAPH', '0') == '1':
     import ngraph_bridge
 
@@ -646,7 +657,7 @@ for (l, h) in enumerate(hidden_sizes):
     else:
         o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,
                    use_skip_conn=use_skip_conn, layer=layer)(o)
-o = DenseMod(out_dim, activation=out_activation)(o)
+o = Activation(out_activation, dtype='float32')(DenseMod(out_dim)(o))
 if loss == 'direct':
     o = concatenate([o, o, o])
 model = Model(inputs=[i], outputs=[o])
@@ -694,8 +705,14 @@ if local_rank == 0:
 weight_decays = {l: l2 for l in get_weight_decays(model)}
 if not base_model.optimizer:
     # Horovod: adjust learning rate based on number of GPUs.
-    opt = eval(optimizer)(lr * world_size, clipnorm=1,
-                          weight_decays=weight_decays)
+    if optimizer == 'SGDW':
+        opt = SGDW(10 * lr * world_size, momentum = 0.9, weight_decays=weight_decays)
+    elif optimizer == 'AdamW':
+        opt = AdamW(lr * world_size, weight_decays=weight_decays)
+    else:
+        opt = eval(optimizer)(lr * world_size)
+    if not tf.executing_eagerly() or not is_volta():
+        opt.clipnorm = 1
 else:
     # use serial model's optimizer state
     opt = base_model.optimizer

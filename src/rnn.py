@@ -81,7 +81,7 @@ parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=10)
 parser.add_argument('--warmup_epochs', type=int, default=3)
 parser.add_argument('--factor', type=float, default=1)
-parser.add_argument('--commission', type=float, default=0)
+parser.add_argument('--commission', type=float, default=1e-4)
 parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--close_thresh', type=float, default=0.5)
 parser.add_argument('--eta', type=float, default=0.1)
@@ -92,9 +92,9 @@ lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
 use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
-commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
-validation_split, patience, warmup_epochs = args.validation_split, args.patience, args.warmup_epochs
-factor, close_thresh, eta = args.factor, args.close_thresh, args.eta
+out_dim, validation_split, patience = args.out_dim, args.validation_split, args.patience
+warmup_epochs, factor, commission = args.warmup_epochs, args.factor, args.commission
+pnl_scale, close_thresh, eta = args.pnl_scale, args.close_thresh, args.eta
 hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
 kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 
@@ -706,7 +706,7 @@ weight_decays = {l: l2 for l in get_weight_decays(model)}
 if not base_model.optimizer:
     # Horovod: adjust learning rate based on number of GPUs.
     if optimizer == 'SGDW':
-        opt = SGDW(10 * lr * world_size, momentum = 0.9, weight_decays=weight_decays)
+        opt = SGDW(10 * lr * world_size, momentum = 0.9, nesterov=True, weight_decays=weight_decays)
     elif optimizer == 'AdamW':
         opt = AdamW(lr * world_size, weight_decays=weight_decays)
     else:

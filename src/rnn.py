@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import os
-os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
@@ -15,16 +14,18 @@ import gc
 import math
 import sys
 
-import tcn
 import numpy as np
+import tcn
 import tensorflow as tf
 import tensorflow.keras.backend as K
+from alt_model_checkpoint.tensorflow import AltModelCheckpoint
 from keras_adamw.optimizers_v2 import SGDW, AdamW
 from keras_adamw.utils import get_weight_decays
 from numba import jit
 from tensorflow.keras import Input, Model
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
-                                        ProgbarLogger, ReduceLROnPlateau)
+                                        ProgbarLogger, ReduceLROnPlateau,
+                                        TensorBoard)
 from tensorflow.keras.initializers import RandomNormal, RandomUniform
 from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      BatchNormalization, Conv1D, Dense,
@@ -42,21 +43,23 @@ from lr_finder import LRFinder
 tf.compat.v1.disable_v2_behavior()
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
-custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN}
+custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
 print('current path %s\n' % os.getcwd())
 
 # parse args
 parser = argparse.ArgumentParser(description='rnnlib')
-parser.add_argument('--data', type=str, default='train.rnn')
-parser.add_argument('--file', type=str, default='rnn.h5')
-parser.add_argument('--warm_start', type=int, default=0)
+parser.add_argument('--model_path', type=str, default='model.h5')
+parser.add_argument('--data_path', type=str, default='train.rnn')
+parser.add_argument('--ckpt_fmt', default='ckpt-{epoch}.h5')
+parser.add_argument('--log_dir', default='logs')
+parser.add_argument('--warm_start', type=int, default=1)
 parser.add_argument('--test', type=int, default=0)
 parser.add_argument('--optimizer', type=str, default='AdamW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
-parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--layer', type=str, default='AHLN')
+parser.add_argument('--epochs', type=int, default=10)
+parser.add_argument('--layer', type=str, default='IndRNN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -69,22 +72,25 @@ parser.add_argument('--dropout', type=float, default=0)
 parser.add_argument('--use_batch_norm', type=int, default=0)
 parser.add_argument('--use_skip_conn', type=int, default=0)
 parser.add_argument('--bottleneck_size', type=int, default=32)
-parser.add_argument('--commission', type=float, default=0)
-parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=10)
+parser.add_argument('--warmup_epochs', type=int, default=3)
+parser.add_argument('--factor', type=float, default=1)
+parser.add_argument('--commission', type=float, default=0)
+parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--close_thresh', type=float, default=0.5)
 parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
-data, file, warm_start, test, optimizer = args.data, args.file, args.warm_start, args.test, args.optimizer
+model_path, data_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.ckpt_fmt, args.log_dir
+warm_start, test, optimizer = args.warm_start, args.test, args.optimizer
 lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
 use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
 commission, pnl_scale, out_dim = args.commission, args.pnl_scale, args.out_dim
-validation_split, patience = args.validation_split, args.patience
-close_thresh, eta  = args.close_thresh, args.eta
+validation_split, patience, warmup_epochs = args.validation_split, args.patience, args.warmup_epochs
+factor, close_thresh, eta = args.factor, args.close_thresh, args.eta
 hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
 kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 
@@ -95,7 +101,9 @@ out_activation = 'sigmoid' if loss == 'binary_crossentropy' else out_activation
 out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activation
 out_activation = 'tanh' if loss == 'pnl' else out_activation
 
-# custom functions
+###################################################################################################
+# custom architectures
+
 
 def OnnxConv(*args, **kwargs):
     def conv(o):
@@ -105,13 +113,14 @@ def OnnxConv(*args, **kwargs):
         return o
     return conv
 
+
 def ResNet(filters,
-        kernel_size,
-        pool_size,
-        padding='causal',
-        dropout=0.0,
-        return_sequences=False,
-        use_batch_norm=True):
+           kernel_size,
+           pool_size,
+           padding='causal',
+           dropout=0.0,
+           return_sequences=False,
+           use_batch_norm=True):
     def resnet_module(i, factor):
         o = Conv1D(filters, factor * kernel_size - 1, padding=padding)(i)
         if use_batch_norm:
@@ -120,6 +129,7 @@ def ResNet(filters,
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         return o
+
     def resnet(i):
         o = resnet_module(i, 3)
         o = resnet_module(o, 2)
@@ -159,9 +169,9 @@ def MLP(hidden_size,
 
 
 def Conv(filters,
-        dropout=0.0,
-        use_batch_norm=True,
-        return_sequences=False):
+         dropout=0.0,
+         use_batch_norm=True,
+         return_sequences=False):
     def conv(i):
         o = Conv1D(filters, 1, padding='causal')(i)
         if use_batch_norm:
@@ -176,11 +186,11 @@ def Conv(filters,
 
 
 def Rocket(filters,
-        pool_size,
-        max_dilation,
-        kernel_sizes=(7, 9, 11),
-        padding='causal',
-        return_sequences=False):
+           pool_size,
+           max_dilation,
+           kernel_sizes=(7, 9, 11),
+           padding='causal',
+           return_sequences=False):
     def rocket(i):
         outs = []
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
@@ -189,14 +199,14 @@ def Rocket(filters,
             for kernel_size in kernel_sizes:
                 for dilation in dilations:
                     o = Conv1D(filters_, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
-                            kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
+                               kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
                     outs.append(o)
         else:
             for n in range(100 * filters):
                 kernel_size = int(np.random.choice(kernel_sizes))
                 dilation = int(np.random.choice(dilations))
                 o = Conv1D(1, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
-                        kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
+                           kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
                 outs.append(o)
         o = concatenate(outs)
         if return_sequences:
@@ -211,16 +221,17 @@ def Rocket(filters,
 
 
 def Inception(filters,
-        kernel_size,
-        pool_size,
-        padding='causal',
-        dropout=0.0,
-        return_sequences=False,
-        use_batch_norm=True,
-        bottleneck_size=32):
+              kernel_size,
+              pool_size,
+              padding='causal',
+              dropout=0.0,
+              return_sequences=False,
+              use_batch_norm=True,
+              bottleneck_size=32):
     def inception_module(i):
         kernel_sizes = [kernel_size * (2 ** i) for i in range(3)]
-        conv_list = [Conv1D(filters // 4, 1, padding=padding, use_bias=False)(CausalMaxPooling1D(3)(i))]
+        conv_list = [Conv1D(filters // 4, 1, padding=padding,
+                            use_bias=False)(CausalMaxPooling1D(3)(i))]
         if bottleneck_size > 0 and int(i.shape[-1]) > 4 * bottleneck_size:
             i = Conv1D(bottleneck_size, 1, padding=padding, use_bias=False)(i)
         for ks in kernel_sizes:
@@ -231,6 +242,7 @@ def Inception(filters,
             o = BatchNormalization()(o)
         o = Activation('relu')(o)
         return o
+
     def inception(i):
         o = inception_module(i)
         o = inception_module(o)
@@ -261,7 +273,7 @@ def TCN(filters,
         use_batch_norm=True):
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
-        o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout, 
+        o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
                     use_batch_norm=use_batch_norm, activation=activation, return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
@@ -272,13 +284,15 @@ def TCN(filters,
 
 
 def ResRNN(hidden_size,
-        dropout=0.0,
-        return_sequences=True,
-        use_skip_conn=False,
-        layer='LSTM'):
+           dropout=0.0,
+           return_sequences=True,
+           use_skip_conn=False,
+           layer='LSTM'):
     def rnn(i):
-        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
-        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+        o = eval(layer)(hidden_size, dropout=dropout,
+                        return_sequences=return_sequences)(i)
+        o = eval(layer)(hidden_size, dropout=dropout,
+                        return_sequences=return_sequences)(i)
         if hidden_size != i.shape[-1]:
             i = DenseMod(hidden_size)(i)
         if use_skip_conn:
@@ -288,11 +302,11 @@ def ResRNN(hidden_size,
 
 
 def AHLN(hidden_size,
-        max_pool_size,
-        dropout=0.0,
-        return_sequences=True,
-        use_batch_norm=True,
-        use_skip_conn=False):
+         max_pool_size,
+         dropout=0.0,
+         return_sequences=True,
+         use_batch_norm=True,
+         use_skip_conn=False):
     def ahln(i):
         pool_list = [i]
         for pool_size in [4**n for n in range(10) if 4**n <= max_pool_size]:
@@ -319,7 +333,7 @@ def AHLN(hidden_size,
         if not return_sequences:
             o = GlobalAveragePooling1D()(o)
         return o
-    return ahln  
+    return ahln
 
 
 def CausalAveragePooling1D(pool_size):
@@ -356,6 +370,18 @@ def CausalMinPooling1D(pool_size):
     return pool
 
 
+def DenseMod(units, activation=None):
+    def densemod(i):
+        if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
+            return Conv1D(units, 1, padding='causal', activation=activation)(i)
+        else:
+            return Dense(units, activation=activation)(i)
+    return densemod
+
+
+###################################################################################################
+# custom loss functions
+
 def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
     r, p, c = λ * y_true, y_pred, λ * c
     l = - K.mean(r * p)
@@ -376,7 +402,8 @@ def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=eta, η=close_
     N, T = r.shape[0], r.shape[1]
     Q = np.zeros((N, T, 3, 5), np.float32)
     π = np.zeros((N, T, 1), np.int8)
-    M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 1, 1, 1]], np.int8)
+    M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1],
+                  [-1, 0, 1, 1, 1]], np.int8)
     # M = np.array([[-1, -1, 0, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 0, 1, 1]], dtype = 'int8')
     for n in range(N):
         Vᵗ = np.zeros(3, np.float32)
@@ -389,7 +416,8 @@ def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=eta, η=close_
                     a_, b_ = np.sign(a - 2), abs(a - 2) / 2
                     c_ = a_ * (b_ * zₙₜ + 1 - b_)
                     Q[n, t, s + 1, a] = max(c_, (η + 1) / 2)
-                    Q[n, t, s + 1, a] += λ * ϵ * (Ṽᵗ[s̃ + 1] + rₙₜ * s̃ - c * abs(s̃ - s))
+                    Q[n, t, s + 1, a] += λ * ϵ * \
+                        (Ṽᵗ[s̃ + 1] + rₙₜ * s̃ - c * abs(s̃ - s))
                     Vᵗ[s + 1] = Q[n, t, s + 1, :].max()
             for i in range(3):
                 Ṽᵗ[i] = Vᵗ[i]
@@ -415,7 +443,8 @@ def direct(y_true, y_pred, η=close_thresh):
 @jit(nopython=True)
 def direct_loss(r, z, λ=pnl_scale, c=commission, η=close_thresh):
     N, T = r.shape[0], r.shape[1]
-    M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1], [-1, 0, 1, 1, 1]], np.int8)
+    M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1],
+                  [-1, 0, 1, 1, 1]], np.int8)
     l = 0.0
     for n in range(N):
         s = 0
@@ -428,35 +457,30 @@ def direct_loss(r, z, λ=pnl_scale, c=commission, η=close_thresh):
     return λ * l / N / T
 
 
+###################################################################################################
+# custom data loader
+
 class JLSequence(Sequence):
 
-    def __init__(self, data, sequence_size, batch_size, logger):
+    def __init__(self, data_path, sequence_size, batch_size, logger):
         self.sess = tf.compat.v1.keras.backend.get_session()
-        if os.path.isfile(data) and os.name != 'nt':
-            x = HDF5Matrix(data, 'x').data
-            p = HDF5Matrix(data, 'p').data
-            y = HDF5Matrix(data, 'y').data[()]
-            w = HDF5Matrix(data, 'w').data[()]
+        if os.path.isfile(data_path) and os.name != 'nt':
+            self.x = HDF5Matrix(data_path, 'x').data
+            self.p = HDF5Matrix(data_path, 'p').data
+            self.y = HDF5Matrix(data_path, 'y').data
+            self.w = HDF5Matrix(data_path, 'w').data
         else:
             F, T, N = 30, 666, 2240
-            x = np.random.randn(T, N, F).astype('float32')
-            y = np.random.randn(T, N, 1).astype('float32')
-            p = np.random.randn(T, N, 1).astype('float32')
-            w = np.random.rand(T, N).astype('float32')
-        if loss == 'pnl' or loss == 'direct':
-            w = w.reshape(*w.shape, 1)
-            y = np.multiply(y, w)
-            w = None
-        else:
-            w = w / w.mean()
-        self.x, self.y = x, y
-        self.w, self.p = w, p
+            self.x = np.random.randn(T, N, F).astype('float32')
+            self.y = np.random.randn(T, N, 1).astype('float32')
+            self.p = np.random.randn(T, N, 1).astype('float32')
+            self.w = np.random.rand(T, N).astype('float32')
         if sequence_size == 0:
-            sequence_size = x.shape[0]
+            sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
         self.batch_size = batch_size
-        self.n_sequences = math.floor(x.shape[0] / sequence_size)
-        self.n_batches = math.ceil(x.shape[1] / batch_size)
+        self.n_sequences = math.floor(self.x.shape[0] / sequence_size)
+        self.n_batches = math.ceil(self.x.shape[1] / batch_size)
         self.start = 0
         self.end = self.n_sequences * self.n_batches
         self.logger = logger
@@ -472,10 +496,11 @@ class JLSequence(Sequence):
         ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
         x = self.x[ts, ns, :].swapaxes(0, 1)
         y = self.y[ts, ns, :].swapaxes(0, 1)
-        if self.w is None:
+        w = self.w[ts, ns].swapaxes(0, 1)
+        if loss == 'pnl' or loss == 'direct':
+            w = w.reshape(*w.shape, 1)
+            y = np.multiply(y, w)
             w = None
-        else:
-            w = self.w[ts, ns].swapaxes(0, 1)
         if x.dtype == 'uint8':
             x = x / 128 - 1
         if loss == 'direct':
@@ -531,10 +556,14 @@ class CustomProgbarLogger(ProgbarLogger):
         if hasattr(self, 'params'):
             self.params['metrics'].append(k)
 
-# # f16 precision
-# if not use_batch_norm:
-#     K.set_floatx('float16')
-#     K.set_epsilon(1e-4)
+
+###################################################################################################
+# configuration
+
+# f16 precision
+if not use_batch_norm:
+    K.set_floatx('float16')
+    K.set_epsilon(1e-4)
 
 # horovod init
 try:
@@ -543,48 +572,41 @@ try:
     world_size = hvd.size()
     use_horovod = world_size > 1
     local_rank = hvd.local_rank()
-    # Horovod: adjust number of epochs based on number of GPUs.
-    epochs = int(math.ceil(epochs / world_size))
 except:
     world_size = 1
     use_horovod = False
     local_rank = 0
 
-# set gpu specific options and reset keras sessions
-if test == 0 and usegpu and tf.config.list_physical_devices('GPU'):
-    tf.compat.v1.keras.backend.get_session().close()
-    tf.compat.v1.keras.backend.clear_session()
-    config = tf.compat.v1.ConfigProto()
-    config.gpu_options.allow_growth = True
-    config.gpu_options.visible_device_list = str(local_rank)
-    sess = tf.compat.v1.Session(config=config)
-    tf.compat.v1.keras.backend.set_session(sess)
+# set gpu specific options
+gpus = tf.config.list_physical_devices('GPU')
+if test == 0 and usegpu and gpus:
+    tf.config.experimental.set_visible_devices(
+        gpus[local_rank % len(gpus)], 'GPU')
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
 elif os.getenv('USE_NGRAPH', '0') == '1':
     import ngraph_bridge
 
 # load hdf5 data or generate dummy data
 logger = CustomProgbarLogger()
-gen = JLSequence(data, sequence_size, batch_size, logger)
+gen = JLSequence(data_path, sequence_size, batch_size, logger)
 trn_gen, val_gen = gen.split(validation_split)
 T, N, F = gen.x.shape
 out_dim = gen.y.shape[-1] if out_dim < 1 else out_dim
 out_seq = len(gen.y.shape) == 3
 
-# test mode
+###################################################################################################
+# model testing
+
 if test == 1:
-    model = load_model(file, compile=False, custom_objects=custom_objects)
-    gen.fill_pred(model.predict_generator(gen))
+    model = load_model(model_path, custom_objects=custom_objects)
+    gen.fill_pred(model.predict(gen))
     exit()
 
-def DenseMod(units, activation=None):
-    def densemod(i):
-        if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
-            return Conv1D(units, 1, padding='causal', activation=activation)(i)
-        else:
-            return Dense(units, activation=activation)(i)
-    return densemod
+###################################################################################################
+# model building
 
-# Expected input batch shape: (N, T, F)
+# expected input batch shape: (N, T, F)
 pool_size = min(T // 3, pool_size)
 max_dilation = min(T // kernel_size, max_dilation)
 if layer == 'MLP':
@@ -601,22 +623,29 @@ for (l, h) in enumerate(hidden_sizes):
     if layer == 'MLP':
         o = MLP(h, dropout=dropout, use_batch_norm=use_batch_norm)(o)
     elif layer == 'Conv':
-        o = Conv(h, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
+        o = Conv(h, dropout=dropout, use_batch_norm=use_batch_norm,
+                 return_sequences=return_sequences)(o)
     elif layer == 'ResNet':
-        o = ResNet(h, kernel_size, pool_size, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
+        o = ResNet(h, kernel_size, pool_size, dropout=dropout,
+                   use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'Inception':
-        o = Inception(h, kernel_size, pool_size, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences, bottleneck_size=bottleneck_size)(o)
+        o = Inception(h, kernel_size, pool_size, dropout=dropout, use_batch_norm=use_batch_norm,
+                      return_sequences=return_sequences, bottleneck_size=bottleneck_size)(o)
     elif layer == 'Rocket':
         if l == 0:
-            o = Rocket(h, pool_size, max_dilation, kernel_sizes, return_sequences=return_sequences)(o)
+            o = Rocket(h, pool_size, max_dilation, kernel_sizes,
+                       return_sequences=return_sequences)(o)
         else:
             o = DenseMod(h, activation='relu')(o)
     elif layer == 'TCN':
-        o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
+        o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout,
+                use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'AHLN':
-        o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm, use_skip_conn=use_skip_conn, return_sequences=return_sequences)(o)
+        o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm,
+                 use_skip_conn=use_skip_conn, return_sequences=return_sequences)(o)
     else:
-        o = ResRNN(h, dropout=dropout, return_sequences=return_sequences, use_skip_conn=use_skip_conn, layer=layer)(o)
+        o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,
+                   use_skip_conn=use_skip_conn, layer=layer)(o)
 o = DenseMod(out_dim, activation=out_activation)(o)
 if loss == 'direct':
     o = concatenate([o, o, o])
@@ -624,36 +653,53 @@ model = Model(inputs=[i], outputs=[o])
 print(model.summary())
 
 # warm start
-if warm_start and os.path.isfile(file):
-    model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
+resume_from_epoch = 0
+if warm_start == 1:
+    for try_epoch in range(epochs, 0, -1):
+        h5 = log_dir + '/' + ckpt_fmt.format(epoch=try_epoch)
+        if os.path.isfile(h5):
+            resume_from_epoch = try_epoch
+            model = load_model(h5, custom_objects=custom_objects)
+            break
+else:
+    import shutil
+    shutil.rmtree(log_dir, ignore_errors=True)
 
 # multi-gpu
-gpu_devices = tf.config.list_physical_devices('GPU')
-if not use_horovod and len(gpu_devices) > 1:
-    model.save(file, include_optimizer=False)
-    with tf.device('/cpu:0'):
-        model = load_model('rnn.h5', compile=False, custom_objects=custom_objects)
-    pmodel = multi_gpu_model(model, len(gpu_devices))
-else:
-    pmodel = model
+base_model = model
+if not use_horovod and len(gpus) > 1:
+    model = multi_gpu_model(model, len(gpus), cpu_relocation=True)
 
-# optimizer and callbacks
-callbacks = [logger]
-weight_decays = {l: l2 for l in get_weight_decays(model)}
+# callbacks
+callbacks = []
 if use_horovod:
     # Horovod: broadcast initial variable states from rank 0 to all other processes.
     callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
-    # Horovod: adjust learning rate based on number of GPUs.
-    opt = eval(optimizer)(lr * world_size, clipnorm=1, weight_decays=weight_decays)
-    opt = hvd.DistributedOptimizer(opt)
-else:
-    opt = eval(optimizer)(lr, clipnorm=1, weight_decays=weight_decays)
+    callbacks.append(hvd.callbacks.MetricAverageCallback())
+    callbacks.append(hvd.callbacks.LearningRateWarmupCallback(
+        warmup_epochs, verbose=1))
+if loss == 'direct':
+    callbacks.append(logger)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
-    callbacks.append(ModelCheckpoint(file))
+    callbacks.append(AltModelCheckpoint(log_dir + '/' + ckpt_fmt, base_model))
+    callbacks.append(TensorBoard(log_dir))
     if validation_split > 0:
         callbacks.append(EarlyStopping(patience=patience, verbose=1))
-    # callbacks.append(ReduceLROnPlateau(monitor='loss', factor=0.5, min_lr=1e-6, varbose=1))
+    if factor < 1:
+        callbacks.append(ReduceLROnPlateau(
+            'loss', factor, patience, min_lr=1e-6, varbose=1))
+
+# optimizer
+weight_decays = {l: l2 for l in get_weight_decays(model)}
+if not base_model.optimizer:
+    # Horovod: adjust learning rate based on number of GPUs.
+    opt = eval(optimizer)(lr * world_size, clipnorm=1,
+                          weight_decays=weight_decays)
+else:
+    # use serial model's optimizer state
+    opt = base_model.optimizer
+opt = hvd.DistributedOptimizer(opt) if use_horovod else opt
 
 # compile
 sample_weight_mode = None if gen.w is None or not out_seq else 'temporal'
@@ -666,26 +712,33 @@ elif 'crossentropy' in str(loss):
 else:
     metric = None
 lossf = eval(loss) if loss in ('pnl', 'direct') else loss
-pmodel.compile(loss=lossf, optimizer=opt, metrics=metric, sample_weight_mode=sample_weight_mode)
+model.compile(loss=lossf, optimizer=opt, metrics=metric,
+              sample_weight_mode=sample_weight_mode,
+              experimental_run_tf_function=False)
 
+###################################################################################################
+# model building
+
+# lr finder
 if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
-    lr_finder = LRFinder(pmodel)
+    lr_finder = LRFinder(model)
     epochs_ = max(1, 100 * batch_size // N)
     lr_finder.find_generator(gen, 1e-6, 1e-2, epochs_)
     best_lr = min(1e-3, lr_finder.get_best_lr(5))
-    K.set_value(pmodel.optimizer.lr, best_lr)
+    K.set_value(model.optimizer.lr, best_lr)
     print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
-pmodel.fit(
+model.fit(
     x=trn_gen,
     epochs=epochs,
-    steps_per_epoch=len(gen) // hvd.size(),
-    verbose=1,
+    steps_per_epoch=len(gen) // world_size,
+    verbose=1 if local_rank == 0 else 0,
     callbacks=callbacks,
     validation_data=val_gen,
-    validation_steps=len(val_gen) // hvd.size(),
+    validation_steps=len(val_gen) // world_size,
+    workers=0 if loss == 'direct' else 1,
     shuffle=True,
-    workers=0
+    initial_epoch=resume_from_epoch
 )
-model.save(file, include_optimizer=False)
+base_model.save(model_path)

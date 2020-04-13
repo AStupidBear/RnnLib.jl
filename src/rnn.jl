@@ -34,7 +34,6 @@ is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.loss)
 const rnnpy = joinpath(@__DIR__, "rnn.py")
 
 function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
-    columns = something(columns, string.(1:size(x, 1)))
     @unpack rnn, n_jobs, warm_start, optimizer, lr, sequence_size = m
     @unpack batch_size, epochs, layer, out_activation, hidden_sizes = m
     @unpack loss, kernel_size, kernel_sizes, pool_size, max_dilation = m
@@ -48,19 +47,14 @@ function fit!(m::RnnModel, x, y, w = nothing; columns = nothing, pnl_scale = 1)
     elseif loss == "spcce"
         out_dim = Int(maximum(y)) + 1
     end
-    if occursin(r"LSTM|GRU", layer)
-        N = size(x, 2)
-        batch_size = max(1, batch_size ÷ N) * N
-        @pack! m = batch_size
-    end
     hosts = join(pmap(n -> gethostname(), 1:max(n_jobs, nworkers())), ',')
-    dst = dump_rnn_data(x, y, w, out_dim, out_seq)
     !isempty(rnn) && write("rnn.h5", rnn)
     if isnothing(Sys.which("mpiexec"))
         exe = `python`
     else
         exe = `mpirun --host $hosts python`
     end
+    dst = dump_rnn_data(x, y, w, out_dim, out_seq)
     run(`$exe $rnnpy --data $dst --file rnn.h5 --warm_start $warm_start --optimizer $optimizer
         --lr $lr --batch_size $batch_size --sequence_size $sequence_size --epochs $epochs
         --layer $layer --out_activation $out_activation --hidden_sizes $hidden_sizes
@@ -105,40 +99,6 @@ end
 
 reset!(m::RnnModel) = empty!(m.rnn)
 
-function consistent(dst, x)
-    !isfile(dst) && return false
-    h5open(dst, "r") do fid
-        size(fid["x"]) == size(x) &&
-        isapprox(x[:, :, 1], fid["x"][:, :, 1])
-    end
-end
-
-function dump_rnn_data(x, y, w, out_dim, out_seq)
-    rng = MersenneTwister(hash(Main))
-    dst = abspath(randstring(rng) * ".rnn")
-    if isnothing(y)
-        dims = out_seq ? size(x)[2:end] : size(x, 2)
-        y = fill(0f0, out_dim, dims...)
-    end
-    if isnothing(w)
-        w = fill(1f0, size(y)[2:end]...)
-    else
-        w = reshape(w, size(y)[2:end]...)
-    end
-    ŷ = fill(0f0, out_dim, size(y)[2:end]...)
-    if !isfile(dst) || !consistent(dst, x)
-        h5save(dst, (x = x, y = y, w = w, p = ŷ))
-    else
-        h5open(dst, "r+") do fid
-            write_batch(fid, "y", y)
-            write_batch(fid, "w", w)
-            write_batch(fid, "p", ŷ)
-        end
-    end
-    atexit(() -> rm(dst, force = true))
-    return dst
-end
-
 modelhash(m::RnnModel) = hash(m.rnn)
 
 function receptive_field(m::RnnModel)
@@ -153,3 +113,21 @@ receptive_field(m) = 1
 RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
+
+function dump_rnn_data(x, y, w, out_dim, out_seq)
+    rng = MersenneTwister(hash(Main))
+    dst = abspath(randstring(rng) * ".rnn")
+    h5open(dst, "r+") do fid
+        h5copy(fid, "x", x)
+        !isnothing(y) && write_batch(fid, "y", y)
+        if isnothing(w)
+            w = fill(1f0, size(y)[2:end]...)
+        else
+            w = reshape(w, size(y)[2:end]...)
+        end
+        !isnothing(w) && write_batch(fid, "w", w)
+        ŷ = fill(0f0, out_dim, size(y)[2:end]...)
+    end
+    atexit(() -> rm(dst, force = true))
+    return dst
+end

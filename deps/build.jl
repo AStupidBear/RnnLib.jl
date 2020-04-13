@@ -1,6 +1,6 @@
 using PyCall: python
 
-run(`$python -m pip install tensorflow onnx onnxruntime`)
+run(`$python -m pip install tensorflow onnx onnxruntime alt-model-checkpoint`)
 run(`$python -m pip install git+https://github.com/philipperemy/keras-tcn.git`)
 run(`$python -m pip install git+https://github.com/OverLordGoldDragon/keras-adamw.git`)
 run(`$python -m pip install git+https://github.com/onnx/onnxmltools.git`)

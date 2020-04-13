@@ -149,7 +149,7 @@ class IndRNNCell(Layer):
             self.recurrent_clip_min = 0.0
 
             if hasattr(self, 'timesteps') and self.timesteps is not None:
-                self.recurrent_clip_max = pow(2.0, 1. / self.timesteps)
+                self.recurrent_clip_max = pow(2.0, 1. / int(self.timesteps))
             else:
                 warnings.warn("IndRNNCell: Number of timesteps could not be determined. \n"
                               "Defaulting to max clipping range of 1.0. \n"

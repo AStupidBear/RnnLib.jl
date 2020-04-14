@@ -7,7 +7,6 @@ import MLSuiteBase: reset!, modelhash
 
 export RnnModel, RnnClassifier, RnnRegressor
 
-include("util.jl")
 include("rnn.jl")
 
 end # module

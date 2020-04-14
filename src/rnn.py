@@ -56,6 +56,10 @@ parser.add_argument('--model_path', type=str, default='model.h5')
 parser.add_argument('--data_path', type=str, default='train.rnn')
 parser.add_argument('--ckpt_fmt', default='ckpt-{epoch}.h5')
 parser.add_argument('--log_dir', default='logs')
+parser.add_argument('--feature_name', default='x')
+parser.add_argument('--label_name', default='y')
+parser.add_argument('--weight_name', default='w')
+parser.add_argument('--pred_name', default='p')
 parser.add_argument('--warm_start', type=int, default=1)
 parser.add_argument('--test', type=int, default=0)
 parser.add_argument('--optimizer', type=str, default='SGDW')
@@ -87,7 +91,8 @@ parser.add_argument('--close_thresh', type=float, default=0.5)
 parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
 model_path, data_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.ckpt_fmt, args.log_dir
-warm_start, test, optimizer = args.warm_start, args.test, args.optimizer
+feature_name, label_name, weight_name = args.feature_name, args.label_name, args.weight_name
+pred_name, warm_start, test, optimizer = args.pred_name, args.warm_start, args.test, args.optimizer
 lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
@@ -478,10 +483,12 @@ class JLSequence(Sequence):
     def __init__(self, data_path, sequence_size, batch_size, logger):
         self.sess = tf.compat.v1.keras.backend.get_session()
         if os.path.isfile(data_path) and os.name != 'nt':
-            self.x = HDF5Matrix(data_path, 'x').data
-            self.p = HDF5Matrix(data_path, 'p').data
-            self.y = HDF5Matrix(data_path, 'y').data
-            self.w = HDF5Matrix(data_path, 'w').data
+            self.x = HDF5Matrix(data_path, feature_name).data
+            self.p = HDF5Matrix(data_path, pred_name).data
+            self.y = HDF5Matrix(data_path, label_name).data
+            self.w = HDF5Matrix(data_path, weight_name).data
+            if loss == 'bce' and self.y.min() < 0:
+                self.y = (self.y + 1) / 2
         else:
             F, T, N = 30, 666, 2240
             self.x = np.random.randn(T, N, F)

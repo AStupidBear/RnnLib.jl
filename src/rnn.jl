@@ -7,14 +7,15 @@ is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.config["loss"])
 
 const rnnpy = joinpath(@__DIR__, "rnn.py")
 
-RnnModel(;ka...) = RnnModel(UInt8[], Dict(ka...))
+RnnModel(;ka...) = RnnModel(UInt8[], Dict(k => string(v) for (k, v) in ka))
 RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
 function fit!(m::RnnModel, h5::String)
     @unpack rnn, config = m
     args = vcat([["--$k", v] for (k, v) in config]...)
-    run(`python $rnnpy --data_path $h5 $args`)
+    cmd = `python $rnnpy --data_path $h5 $args`
+    println(cmd); run(cmd)
     m.rnn = read("model.h5")
     return m
 end
@@ -23,7 +24,7 @@ function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
     args = ["--$k=$v" for (k, v) in config]
-    run(`ipython --pdb $rnnpy --data_path $h5 --test 1 $args...`)
+    run(`python $rnnpy --data_path $h5 --test 1 $args...`)
     return h5
 end
 

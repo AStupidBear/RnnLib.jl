@@ -76,7 +76,7 @@ parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--layer', type=str, default='AHLN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
-parser.add_argument('--loss', type=str, default='pnl')
+parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
 parser.add_argument('--pool_size', type=int, default=1)
@@ -129,7 +129,6 @@ def is_volta():
     return False
 
 def use_mixed_precision():
-    return True
     return is_volta()
 
 ###################################################################################################

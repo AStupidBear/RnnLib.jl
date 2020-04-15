@@ -16,6 +16,8 @@ import math
 import re
 import sys
 
+import h5py
+import hdf5plugin
 import numpy as np
 import tcn
 import tensorflow as tf
@@ -42,15 +44,19 @@ from tensorflow.python.client import device_lib
 from ind_rnn import IndRNN
 from lr_finder import LRFinder
 
-# config
-# if os.getenv('TF_EAGER', '0') == '0':
-#     tf.compat.v1.disable_v2_behavior()
+###################################################################################################
+# configuration
+
+if os.getenv('TF_EAGER', '0') == '0':
+    tf.compat.v1.disable_eager_execution()
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
 custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
 print('current path %s\n' % os.getcwd())
 
+###################################################################################################
 # parse args
+
 parser = argparse.ArgumentParser(description='rnnlib')
 parser.add_argument('--model_path', type=str, default='model.h5')
 parser.add_argument('--data_path', type=str, default='train.rnn')
@@ -60,9 +66,9 @@ parser.add_argument('--feature_name', default='x')
 parser.add_argument('--label_name', default='y')
 parser.add_argument('--weight_name', default='w')
 parser.add_argument('--pred_name', default='p')
-parser.add_argument('--warm_start', type=int, default=1)
+parser.add_argument('--warm_start', type=int, default=0)
 parser.add_argument('--test', type=int, default=0)
-parser.add_argument('--optimizer', type=str, default='SGDW')
+parser.add_argument('--optimizer', type=str, default='AdamW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
@@ -70,7 +76,7 @@ parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--layer', type=str, default='AHLN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
-parser.add_argument('--loss', type=str, default='mse')
+parser.add_argument('--loss', type=str, default='pnl')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
 parser.add_argument('--pool_size', type=int, default=1)
@@ -110,6 +116,9 @@ out_activation = 'sigmoid' if loss == 'binary_crossentropy' else out_activation
 out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activation
 out_activation = 'tanh' if loss == 'pnl' else out_activation
 
+###################################################################################################
+# utility functions
+
 def is_volta():
     for dev in device_lib.list_local_devices():
         m = re.findall('capability: ([0-9\.]+)', dev.physical_device_desc)
@@ -118,6 +127,10 @@ def is_volta():
             if capability > 7:
                 return True
     return False
+
+def use_mixed_precision():
+    return True
+    return is_volta()
 
 ###################################################################################################
 # custom architectures
@@ -403,7 +416,7 @@ def DenseMod(units, activation=None):
 def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
     r, p, c = λ * y_true, y_pred, λ * c
     l = - K.mean(r * p)
-    if not out_seq:
+    if len(y_pred.get_shape()) < 3:
         return l
     c1 = c / K.cast(K.shape(p)[1], 'float32')
     if c > 0:
@@ -483,18 +496,26 @@ class JLSequence(Sequence):
     def __init__(self, data_path, sequence_size, batch_size, logger):
         self.sess = tf.compat.v1.keras.backend.get_session()
         if os.path.isfile(data_path) and os.name != 'nt':
-            self.x = HDF5Matrix(data_path, feature_name).data
-            self.p = HDF5Matrix(data_path, pred_name).data
-            self.y = HDF5Matrix(data_path, label_name).data
-            self.w = HDF5Matrix(data_path, weight_name).data
-            if loss == 'bce' and self.y.min() < 0:
-                self.y = (self.y + 1) / 2
+            self.fid = h5py.File(data_path, 'r+')
+            self.x = self.fid[feature_name]
+            if label_name in self.fid.keys():
+                self.y = self.fid[label_name]
+            else:
+                self.y = None
+            if pred_name in self.fid.keys():
+                self.p = self.fid[pred_name]
+            else:
+                self.p = None
+            if weight_name in self.fid.keys():
+                self.w = self.fid[weight_name]
+            else:
+                self.w = None
         else:
             F, T, N = 30, 666, 2240
             self.x = np.random.randn(T, N, F)
-            self.y = np.mean(self.x, axis = 2).reshape(T, N, -1)
-            self.p = np.random.randn(T, N, 1)
-            self.w = np.random.rand(T, N)
+            self.y = np.mean(self.x, axis = 2)
+            self.p = None
+            self.w = None
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
@@ -504,6 +525,14 @@ class JLSequence(Sequence):
         self.start = 0
         self.end = self.n_sequences * self.n_batches
         self.logger = logger
+        self.out_seq = self.y.shape[0] == self.x.shape[0]
+        if out_dim < 1:
+            if self.out_seq:
+                self.out_dim = self.y.shape[-1] if self.y.ndim == 3 else 1
+            else:
+                self.out_dim = self.y.shape[-1] if self.y.ndim == 2 else 1
+        else:
+            self.out_dim = out_dim
 
     def __len__(self):
         return self.end - self.start
@@ -515,21 +544,36 @@ class JLSequence(Sequence):
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
         ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
         x = self.x[ts, ns, :].swapaxes(0, 1)
-        y = self.y[ts, ns, :].swapaxes(0, 1)
-        w = self.w[ts, ns].swapaxes(0, 1)
-        if loss == 'pnl' or loss == 'direct':
+        if x.dtype == 'uint8':
+            x = x / 128 - 1
+        if self.y is not None:
+            if self.y.shape[0] == self.x.shape[0]:
+                y = self.y[ts, ns].swapaxes(0, 1)
+                y = y.reshape(*y.shape[:2], -1)
+            else:
+                y = self.y[ns]
+                y = y.reshape(*y.shape[:1], -1)
+        else:
+            y = None
+        if self.w is not None:
+            if self.w.shape[0] == self.x.shape[0]:
+                w = self.w[ts, ns].swapaxes(0, 1)
+            else:
+                w = self.w[ns]
+        else:
+            w = None
+        if w is not None and loss in  ('pnl', 'direct'):
             w = w.reshape(*w.shape, 1)
             y = np.multiply(y, w)
             w = None
-        if x.dtype == 'uint8':
-            x = x / 128 - 1
-        if loss == 'direct':
+        if loss == 'direct' and y is not None:
             if tf.executing_eagerly():
                 z = model(x).numpy()
             else:
                 tf.compat.v1.keras.backend.set_session(self.sess)
                 with self.sess.graph.as_default():
                     z = model.predict_on_batch(x)
+            z = z.astype('float', copy=False)
             self.logger.add_log('direct_loss', direct_loss(y, z))
             yw = loss_augmented_inference(y, z, 0)
             yϵ = loss_augmented_inference(y, z)
@@ -555,7 +599,11 @@ class JLSequence(Sequence):
             ns = slice(self.batch_size * n, self.batch_size * (n + 1))
             ns = range(ns.start, min(ns.stop, self.x.shape[1]))
             y = pred[npred:(npred + len(ns)), :, 0:self.p.shape[2]]
+            if not self.p:
+                shape = (*self.x.shape[:2], y.shape[-1])
+                self.fid.create_dataset(pred_name, shape, dtype='float')
             self.p[ts, ns, :] = y.swapaxes(0, 1)
+            self.fid.flush()
             npred += len(ns)
 
 
@@ -600,7 +648,7 @@ if test == 0 and usegpu and gpus:
     for gpu in gpus:
         tf.config.experimental.set_memory_growth(gpu, True)
     # mixed precision
-    if is_volta() and tf.executing_eagerly():
+    if use_mixed_precision():
         tf.keras.mixed_precision.experimental.set_policy('mixed_float16')
 elif os.getenv('USE_NGRAPH', '0') == '1':
     import ngraph_bridge
@@ -609,9 +657,6 @@ elif os.getenv('USE_NGRAPH', '0') == '1':
 logger = CustomProgbarLogger()
 gen = JLSequence(data_path, sequence_size, batch_size, logger)
 trn_gen, val_gen = gen.split(validation_split)
-T, N, F = gen.x.shape
-out_dim = gen.y.shape[-1] if out_dim < 1 else out_dim
-out_seq = len(gen.y.shape) == 3
 
 ###################################################################################################
 # model testing
@@ -625,6 +670,7 @@ if test == 1:
 # model building
 
 # expected input batch shape: (N, T, F)
+T, N, F = gen.x.shape
 pool_size = min(T // 3, pool_size)
 max_dilation = min(T // kernel_size, max_dilation)
 if layer == 'MLP':
@@ -637,7 +683,7 @@ elif os.getenv('USE_TFLITE', '0') == '1':
 else:
     o = i = Input(shape=(None, F))
 for (l, h) in enumerate(hidden_sizes):
-    return_sequences = l + 1 < len(hidden_sizes) or out_seq
+    return_sequences = l + 1 < len(hidden_sizes) or gen.out_seq
     if layer == 'MLP':
         o = MLP(h, dropout=dropout, use_batch_norm=use_batch_norm)(o)
     elif layer == 'Conv':
@@ -664,7 +710,7 @@ for (l, h) in enumerate(hidden_sizes):
     else:
         o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,
                    use_skip_conn=use_skip_conn, layer=layer)(o)
-o = Activation(out_activation, dtype='float32')(DenseMod(out_dim)(o))
+o = Activation(out_activation, dtype='float')(DenseMod(gen.out_dim)(o))
 if loss == 'direct':
     o = concatenate([o, o, o])
 model = Model(inputs=[i], outputs=[o])
@@ -718,7 +764,7 @@ if not base_model.optimizer:
         opt = AdamW(lr * world_size, weight_decays=weight_decays)
     else:
         opt = eval(optimizer)(lr * world_size)
-    if not tf.executing_eagerly() or not is_volta():
+    if not use_mixed_precision():
         opt.clipnorm = 1
 else:
     # use serial model's optimizer state
@@ -726,7 +772,7 @@ else:
 opt = hvd.DistributedOptimizer(opt) if use_horovod else opt
 
 # compile
-sample_weight_mode = None if gen.w is None or not out_seq else 'temporal'
+sample_weight_mode = None if gen.w is None or not gen.out_seq else 'temporal'
 if 'mse' in str(loss):
     metric = ['mae']
 elif 'crossentropy' in str(loss):

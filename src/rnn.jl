@@ -1,6 +1,6 @@
 mutable struct RnnModel <: BaseEstimator
     rnn::Vector{UInt8}
-    config::Dict{String, String}
+    config::Dict{Symbol, String}
 end
 
 is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.config["loss"])
@@ -13,8 +13,8 @@ RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
 function fit!(m::RnnModel, h5::String)
     @unpack rnn, config = m
-    args = ["--$k=$v" for (k, v) in config]
-    run(`python $rnnpy --data_path $h5 $args...`)
+    args = vcat([["--$k", v] for (k, v) in config]...)
+    run(`python $rnnpy --data_path $h5 $args`)
     m.rnn = read("model.h5")
     return m
 end
@@ -23,11 +23,16 @@ function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
     args = ["--$k=$v" for (k, v) in config]
-    run(`python $rnnpy --data_path $h5 --test 1 $args...`)
+    run(`ipython --pdb $rnnpy --data_path $h5 --test 1 $args...`)
     return h5
 end
 
-fit!(m::RnnModel, x, y, w = nothing; columns = nothing) = fit!(m, dump_rnn_data(x, y, w))
+function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
+    if m.config["loss"] == "bce" && minimum(y) < 0
+        y = (y .+ 1) ./ 2
+    end
+    fit!(m, dump_rnn_data(x, y, w))
+end
 
 function predict_proba(m::RnnModel, x)
     ŷ = h5read(predict(m, dump_rnn_data(x)), "p")

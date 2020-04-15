@@ -31,7 +31,6 @@ from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
                                         ProgbarLogger, ReduceLROnPlateau,
                                         TensorBoard)
 from tensorflow.keras.initializers import RandomNormal, RandomUniform
-from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      BatchNormalization, Conv1D, Dense,
                                      Dropout, Flatten, GlobalAveragePooling1D,
@@ -39,6 +38,7 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      MaxPooling1D, SpatialDropout1D,
                                      TimeDistributed, add, concatenate)
 from tensorflow.keras.models import load_model
+from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 from tensorflow.python.client import device_lib
 
@@ -500,9 +500,9 @@ class JLSequence(Sequence):
             with h5py.File(data_path, 'w') as fid:
                 x = np.random.randn(T, N, F).astype('float32')
                 y = np.mean(x, axis=2)
-                fid.create_dataset(feature_name, data=x, chunks=(T, batch_size, F))
-                fid.create_dataset(label_name, data=y, chunks=(T, batch_size))
-        self.fid = h5py.File(data_path, 'r+')
+                fid.create_dataset(feature_name, data=x, chunks=(T // 2, 2 * batch_size, F), **hdf5plugin.Blosc('zstd'))
+                fid.create_dataset(label_name, data=y, chunks=(T // 2, 2 * batch_size), **hdf5plugin.Blosc('zstd'))
+        self.fid = h5py.File(data_path, 'r+', rdcc_nbytes=1024**3, rdcc_nslots=100000)
         if label_name in self.fid.keys():
             self.y = self.fid[label_name][()]
         else:
@@ -518,12 +518,6 @@ class JLSequence(Sequence):
         import time;
         ti = time.time()
         self.x = self.fid[feature_name]
-        # from h5py._reader import Reader
-        # self.x_reader = Reader(self.x.id)
-        self.T, self.N, self.F = self.x.shape
-        print('--------------')
-        print(time.time() - ti)
-        print('--------------')
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
@@ -551,19 +545,6 @@ class JLSequence(Sequence):
         ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
         ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
-        import time; ti = time.time()
-        # # x = self.x_reader.read((ts, ns, slice(0, self.F))).swapaxes(0, 1)
-        # from h5py._hl.selections import SimpleSelection
-        # x = np.zeros((ts.stop - ts.start, ns.stop - ns.start, self.F), dtype='float')
-        # self.xi_sel = SimpleSelection((ts.stop - ts.start, ns.stop - ns.start, self.F))
-        # if not hasattr(self, 'x_sel'):
-        #     self.x_sel = SimpleSelection(self.x.shape)
-        # self.x_sel[ts, ns, slice(0, self.F)]
-        # self.x.id.read(self.xi_sel.id, self.x_sel.id, x, dxpl=self.x._dxpl)
-        # x = x.swapaxes(0, 1)
-        # self.x[0:5, 0:5, :]
-        print('------------------')
-        print(time.time() - ti)
         x = self.x[ts, ns, :].swapaxes(0, 1)
         if x.dtype == 'uint8':
             x = x / 128 - 1
@@ -823,13 +804,13 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
 model.fit(
     x=trn_gen,
     epochs=epochs,
-    steps_per_epoch=len(gen) // world_size,
     verbose=1 if local_rank == 0 else 0,
     callbacks=callbacks,
     validation_data=val_gen,
-    validation_steps=len(val_gen) // world_size,
-    workers=0 if loss == 'direct' else 1,
     shuffle=True,
-    initial_epoch=resume_from_epoch
+    initial_epoch=resume_from_epoch,
+    steps_per_epoch=len(gen) // world_size,
+    validation_steps=len(val_gen) // world_size,
+    workers=0 if loss == 'direct' else 4,
 )
 base_model.save(model_path)

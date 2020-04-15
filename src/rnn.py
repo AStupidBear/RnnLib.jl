@@ -74,7 +74,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=10)
-parser.add_argument('--layer', type=str, default='Inception')
+parser.add_argument('--layer', type=str, default='AHLN')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -748,7 +748,7 @@ if loss == 'direct':
     callbacks.append(logger)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
-    # callbacks.append(AltModelCheckpoint(log_dir + '/' + ckpt_fmt, base_model))
+    callbacks.append(AltModelCheckpoint(log_dir + '/' + ckpt_fmt, base_model))
     callbacks.append(TensorBoard(log_dir))
     if validation_split > 0:
         callbacks.append(EarlyStopping(patience=patience, verbose=1))

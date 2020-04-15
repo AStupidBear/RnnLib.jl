@@ -3,6 +3,7 @@ Manifest.toml
 deps/build.log
 __pycache__
 *.h5
+*.rnn
 *.onnx
 *.tflite
 *.pb

@@ -31,6 +31,7 @@ from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
                                         ProgbarLogger, ReduceLROnPlateau,
                                         TensorBoard)
 from tensorflow.keras.initializers import RandomNormal, RandomUniform
+from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      BatchNormalization, Conv1D, Dense,
                                      Dropout, Flatten, GlobalAveragePooling1D,
@@ -73,7 +74,7 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=10)
-parser.add_argument('--layer', type=str, default='AHLN')
+parser.add_argument('--layer', type=str, default='Inception')
 parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
@@ -494,27 +495,35 @@ class JLSequence(Sequence):
 
     def __init__(self, data_path, sequence_size, batch_size, logger):
         self.sess = tf.compat.v1.keras.backend.get_session()
-        if os.path.isfile(data_path) and os.name != 'nt':
-            self.fid = h5py.File(data_path, 'r+')
-            self.x = self.fid[feature_name]
-            if label_name in self.fid.keys():
-                self.y = self.fid[label_name]
-            else:
-                self.y = None
-            if pred_name in self.fid.keys():
-                self.p = self.fid[pred_name]
-            else:
-                self.p = None
-            if weight_name in self.fid.keys():
-                self.w = self.fid[weight_name]
-            else:
-                self.w = None
+        if not os.path.isfile(data_path):
+            F, T, N = 30, 3000, 4802
+            with h5py.File(data_path, 'w') as fid:
+                x = np.random.randn(T, N, F).astype('float32')
+                y = np.mean(x, axis=2)
+                fid.create_dataset(feature_name, data=x, chunks=(T, batch_size, F))
+                fid.create_dataset(label_name, data=y, chunks=(T, batch_size))
+        self.fid = h5py.File(data_path, 'r+')
+        if label_name in self.fid.keys():
+            self.y = self.fid[label_name][()]
         else:
-            F, T, N = 30, 666, 2240
-            self.x = np.random.randn(T, N, F)
-            self.y = np.mean(self.x, axis = 2)
+            self.y = None
+        if pred_name in self.fid.keys():
+            self.p = self.fid[pred_name]
+        else:
             self.p = None
+        if weight_name in self.fid.keys():
+            self.w = self.fid[weight_name]
+        else:
             self.w = None
+        import time;
+        ti = time.time()
+        self.x = self.fid[feature_name]
+        # from h5py._reader import Reader
+        # self.x_reader = Reader(self.x.id)
+        self.T, self.N, self.F = self.x.shape
+        print('--------------')
+        print(time.time() - ti)
+        print('--------------')
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
@@ -542,6 +551,19 @@ class JLSequence(Sequence):
         ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
         ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
+        import time; ti = time.time()
+        # # x = self.x_reader.read((ts, ns, slice(0, self.F))).swapaxes(0, 1)
+        # from h5py._hl.selections import SimpleSelection
+        # x = np.zeros((ts.stop - ts.start, ns.stop - ns.start, self.F), dtype='float')
+        # self.xi_sel = SimpleSelection((ts.stop - ts.start, ns.stop - ns.start, self.F))
+        # if not hasattr(self, 'x_sel'):
+        #     self.x_sel = SimpleSelection(self.x.shape)
+        # self.x_sel[ts, ns, slice(0, self.F)]
+        # self.x.id.read(self.xi_sel.id, self.x_sel.id, x, dxpl=self.x._dxpl)
+        # x = x.swapaxes(0, 1)
+        # self.x[0:5, 0:5, :]
+        print('------------------')
+        print(time.time() - ti)
         x = self.x[ts, ns, :].swapaxes(0, 1)
         if x.dtype == 'uint8':
             x = x / 128 - 1
@@ -713,7 +735,7 @@ o = Activation(out_activation, dtype='float')(DenseMod(gen.out_dim)(o))
 if loss == 'direct':
     o = concatenate([o, o, o])
 model = Model(inputs=[i], outputs=[o])
-print(model.summary())
+# print(model.summary())
 
 # warm start
 resume_from_epoch = 0
@@ -745,7 +767,7 @@ if loss == 'direct':
     callbacks.append(logger)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
-    callbacks.append(AltModelCheckpoint(log_dir + '/' + ckpt_fmt, base_model))
+    # callbacks.append(AltModelCheckpoint(log_dir + '/' + ckpt_fmt, base_model))
     callbacks.append(TensorBoard(log_dir))
     if validation_split > 0:
         callbacks.append(EarlyStopping(patience=patience, verbose=1))

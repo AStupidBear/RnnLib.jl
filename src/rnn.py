@@ -90,11 +90,9 @@ import sys
 import h5py
 import hdf5plugin
 import numpy as np
-import tcn
 import tensorflow as tf
 import tensorflow.keras.backend as K
 from alt_model_checkpoint.tensorflow import AltModelCheckpoint
-from keras_adamw.optimizers_v2 import SGDW, AdamW
 from keras_adamw.utils import get_weight_decays
 from numba import jit
 from tensorflow.keras import Input, Model
@@ -109,12 +107,11 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      MaxPooling1D, SpatialDropout1D,
                                      TimeDistributed, add, concatenate)
 from tensorflow.keras.models import load_model
-from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 from tensorflow.python.client import device_lib
 
-from ind_rnn import IndRNN
 from lr_finder import LRFinder
+from custom import *
 
 ###################################################################################################
 # configuration
@@ -123,7 +120,6 @@ if os.getenv('TF_EAGER', '0') == '0':
     tf.compat.v1.disable_eager_execution()
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
-custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
 print('current path %s\n' % os.getcwd())
 
 ###################################################################################################
@@ -149,7 +145,7 @@ def OnnxConv(*args, **kwargs):
     def conv(o):
         for i in range(10):
             o = Conv1D(10, 3, padding='causal')(o)
-            o = Activation('relu')(o)
+            o = Activation('swish')(o)
         return o
     return conv
 
@@ -165,7 +161,7 @@ def ResNet(filters,
         o = Conv1D(filters, factor * kernel_size - 1, padding=padding)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         return o
@@ -183,7 +179,7 @@ def ResNet(filters,
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if return_sequences:
@@ -201,7 +197,7 @@ def MLP(hidden_size,
         o = Dense(hidden_size)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         if dropout > 0:
             o = Dropout(dropout)(o)
         return o
@@ -216,7 +212,7 @@ def Conv(filters,
         o = Conv1D(filters, 1, padding='causal')(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if not return_sequences:
@@ -280,7 +276,7 @@ def Inception(filters,
         o = concatenate(conv_list)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         return o
 
     def inception(i):
@@ -291,7 +287,7 @@ def Inception(filters,
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if return_sequences:
@@ -309,12 +305,11 @@ def TCN(filters,
         padding='causal',
         dropout=0.0,
         return_sequences=False,
-        activation='relu',
         use_batch_norm=True):
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
-                    use_batch_norm=use_batch_norm, activation=activation, return_sequences=True)(i)
+                    use_batch_norm=use_batch_norm, activation='swish', return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
         else:
@@ -358,7 +353,7 @@ def AHLN(hidden_size,
             o = DenseMod(hidden_size)(o)
             if use_batch_norm:
                 o = BatchNormalization()(o)
-            o = Activation('relu')(o)
+            o = Activation('swish')(o)
             if dropout > 0:
                 o = SpatialDropout1D(dropout)(o)
         if hidden_size != i.shape[-1]:
@@ -367,7 +362,7 @@ def AHLN(hidden_size,
             i = BatchNormalization()(i)
         if use_skip_conn:
             o = add([i, o])
-        o = Activation('relu')(o)
+        o = Activation('swish')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if not return_sequences:
@@ -410,12 +405,12 @@ def CausalMinPooling1D(pool_size):
     return pool
 
 
-def DenseMod(units, activation=None):
+def DenseMod(units):
     def densemod(i):
         if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
-            return Conv1D(units, 1, padding='causal', activation=activation)(i)
+            return Conv1D(units, 1, padding='causal', activation='swish')(i)
         else:
-            return Dense(units, activation=activation)(i)
+            return Dense(units, activation='swish')(i)
     return densemod
 
 
@@ -673,7 +668,7 @@ trn_gen, val_gen = gen.split(validation_split)
 # model testing
 
 if test == 1:
-    model = load_model(model_path, custom_objects=custom_objects)
+    model = load_model(model_path)
     gen.fill_pred(model.predict(gen))
     exit()
 
@@ -711,7 +706,7 @@ for (l, h) in enumerate(hidden_sizes):
             o = Rocket(h, pool_size, max_dilation, kernel_sizes,
                        return_sequences=return_sequences)(o)
         else:
-            o = DenseMod(h, activation='relu')(o)
+            o = DenseMod(h, activation='swish')(o)
     elif layer == 'TCN':
         o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout,
                 use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
@@ -734,7 +729,7 @@ if warm_start == 1:
         h5 = log_dir + '/' + ckpt_fmt.format(epoch=try_epoch)
         if os.path.isfile(h5):
             resume_from_epoch = try_epoch
-            model = load_model(h5, custom_objects=custom_objects)
+            model = load_model(h5)
             break
 else:
     import shutil

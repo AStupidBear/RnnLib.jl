@@ -1,10 +1,12 @@
 # convert model
 import os
-import sys
-import time
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_KERAS'] = '1'
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import sys
+import time
 
 import numpy as np
 import onnxmltools
@@ -13,14 +15,18 @@ import tcn
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from tensorflow.python.platform import gfile
+from keras_adamw.optimizers_v2 import SGDW, AdamW
 
 from ind_rnn import IndRNN
 
-h5 = 'rnn.h5' if len(sys.argv) == 1 else sys.argv[1]
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
+
+h5 = 'model.h5' if len(sys.argv) == 1 else sys.argv[1]
 name = h5.split('.')[0]
 
 # load model
-custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN}
+custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
 model = load_model(h5, compile=False, custom_objects=custom_objects)
 input_shape = model.inputs[0].shape.as_list()
 input_shape[0] = input_shape[0] if input_shape[0] else 32

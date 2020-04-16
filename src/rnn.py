@@ -270,10 +270,10 @@ def Inception(filters,
               bottleneck_size=32):
     def inception_module(i):
         kernel_sizes = [kernel_size * (2 ** i) for i in range(3)]
-        conv_list = [Conv1D(filters // 4, 1, padding=padding,
-                            use_bias=False)(CausalMaxPooling1D(3)(i))]
         if bottleneck_size > 0 and int(i.shape[-1]) > 4 * bottleneck_size:
             i = Conv1D(bottleneck_size, 1, padding=padding, use_bias=False)(i)
+        conv_list = [Conv1D(filters // 4, 1, padding=padding,
+                            use_bias=False)(CausalMaxPooling1D(3)(i))]
         for ks in kernel_sizes:
             o = Conv1D(filters // 4, ks, padding=padding, use_bias=False)(i)
             conv_list.append(o)

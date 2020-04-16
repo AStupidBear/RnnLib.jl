@@ -1,30 +1,44 @@
 import os
 import time
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ['TF_KERAS'] = '1'
-os.environ["OMP_NUM_THREADS"] = "1"
-
 import numpy as np
 import onnxmltools
 import onnxruntime as ort
 import tensorflow as tf
 from tensorflow.keras import Input, Model
 from tensorflow.keras.layers import (Activation, BatchNormalization, Conv1D,
-                                     Dense, MaxPooling1D, add, concatenate)
+                                     Dense, Lambda, MaxPooling1D, MaxPooling2D,
+                                     add, concatenate)
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ['TF_KERAS'] = '1'
+os.environ["OMP_NUM_THREADS"] = "1"
+
 
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
 
+
+# def MaxPooling1D(pool_size, strides=1, padding='same'):
+#     def maxpool(i):
+#         o = Lambda(lambda x: tf.keras.backend.expand_dims(x, axis=-3))(i)
+#         o = MaxPooling2D((pool_size, 1), strides=(
+#             strides, 1), padding=padding)(o)
+#         o = Lambda(lambda x: tf.keras.backend.squeeze(x, axis=-3))(o)
+#         return o
+#     return maxpool
+
+
 def Inception(filters,
-            kernel_size,
-            pool_size,
-            padding='same',
-            use_batch_norm=False):
+              kernel_size,
+              pool_size,
+              padding='same',
+              use_batch_norm=False):
     def inception_module(i):
         kernel_sizes = [kernel_size * (2 ** i) for i in range(3)]
         pool_i = MaxPooling1D(pool_size=3, strides=1, padding=padding)(i)
-        conv_list = [Conv1D(filters // 4, 1, padding=padding, use_bias=False)(pool_i)]
+        conv_list = [
+            Conv1D(filters // 4, 1, padding=padding, use_bias=False)(pool_i)]
         for ks in kernel_sizes:
             o = Conv1D(filters // 4, ks, padding=padding, use_bias=False)(i)
             conv_list.append(o)
@@ -46,6 +60,7 @@ def Inception(filters,
         o = Activation('relu')(o)
         return o
     return inception
+
 
 F, N, T = 30, 32, 4096
 x = np.random.randn(N, T, F).astype('float32')

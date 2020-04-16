@@ -496,7 +496,7 @@ class JLSequence(Sequence):
     def __init__(self, data_path, sequence_size, batch_size, logger):
         self.sess = tf.compat.v1.keras.backend.get_session()
         if not os.path.isfile(data_path):
-            F, T, N = 30, 3000, 4802
+            F, N, T = 30, 3000, 4802
             with h5py.File(data_path, 'w') as fid:
                 x = np.random.randn(T, N, F).astype('float32')
                 y = np.mean(x, axis=2)

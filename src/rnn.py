@@ -1,63 +1,9 @@
 #!/usr/bin/env python
-if True:
-    import os
-    os.environ['MKL_NUM_THREADS'] = '1'
-    os.environ['OPENBLAS_NUM_THREADS'] = '1'
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    usegpu = os.getenv('USE_GPU', '1') == '1'
-    if not usegpu:
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
-
-import argparse
-import copy
-import gc
-import math
-import re
-import sys
-
-import h5py
-import hdf5plugin
-import numpy as np
-import tcn
-import tensorflow as tf
-import tensorflow.keras.backend as K
-from alt_model_checkpoint.tensorflow import AltModelCheckpoint
-from keras_adamw.optimizers_v2 import SGDW, AdamW
-from keras_adamw.utils import get_weight_decays
-from numba import jit
-from tensorflow.keras import Input, Model
-from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
-                                        ProgbarLogger, ReduceLROnPlateau,
-                                        TensorBoard)
-from tensorflow.keras.initializers import RandomNormal, RandomUniform
-from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
-                                     BatchNormalization, Conv1D, Dense,
-                                     Dropout, Flatten, GlobalAveragePooling1D,
-                                     GlobalMaxPooling1D, Lambda, Layer,
-                                     MaxPooling1D, SpatialDropout1D,
-                                     TimeDistributed, add, concatenate)
-from tensorflow.keras.models import load_model
-from tensorflow.keras.optimizers import SGD, Adam
-from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
-from tensorflow.python.client import device_lib
-
-from ind_rnn import IndRNN
-from lr_finder import LRFinder
-
-###################################################################################################
-# configuration
-
-if os.getenv('TF_EAGER', '0') == '0':
-    tf.compat.v1.disable_eager_execution()
-tf.config.threading.set_inter_op_parallelism_threads(1)
-tf.config.threading.set_intra_op_parallelism_threads(1)
-custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
-print('current path %s\n' % os.getcwd())
 
 ###################################################################################################
 # parse args
 
+import argparse
 parser = argparse.ArgumentParser(description='rnnlib')
 parser.add_argument('--model_path', type=str, default='model.h5')
 parser.add_argument('--data_path', type=str, default='train.rnn')
@@ -116,6 +62,68 @@ loss = 'sparse_categorical_crossentropy' if loss == 'spcce' else loss
 out_activation = 'sigmoid' if loss == 'binary_crossentropy' else out_activation
 out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activation
 out_activation = 'tanh' if loss == 'pnl' else out_activation
+
+###################################################################################################
+# setting envs
+
+import os
+if layer in ('LSTM', 'GRU'):
+    os.environ['TF_DISABLE_MKL'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+usegpu = os.getenv('USE_GPU', '1') == '1'
+if not usegpu:
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
+
+###################################################################################################
+# package loading
+
+import copy
+import gc
+import math
+import re
+import sys
+
+import h5py
+import hdf5plugin
+import numpy as np
+import tcn
+import tensorflow as tf
+import tensorflow.keras.backend as K
+from alt_model_checkpoint.tensorflow import AltModelCheckpoint
+from keras_adamw.optimizers_v2 import SGDW, AdamW
+from keras_adamw.utils import get_weight_decays
+from numba import jit
+from tensorflow.keras import Input, Model
+from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
+                                        ProgbarLogger, ReduceLROnPlateau,
+                                        TensorBoard)
+from tensorflow.keras.initializers import RandomNormal, RandomUniform
+from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
+                                     BatchNormalization, Conv1D, Dense,
+                                     Dropout, Flatten, GlobalAveragePooling1D,
+                                     GlobalMaxPooling1D, Lambda, Layer,
+                                     MaxPooling1D, SpatialDropout1D,
+                                     TimeDistributed, add, concatenate)
+from tensorflow.keras.models import load_model
+from tensorflow.keras.optimizers import SGD, Adam
+from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
+from tensorflow.python.client import device_lib
+
+from ind_rnn import IndRNN
+from lr_finder import LRFinder
+
+###################################################################################################
+# configuration
+
+if os.getenv('TF_EAGER', '0') == '0':
+    tf.compat.v1.disable_eager_execution()
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
+custom_objects = {'TCN': tcn.TCN, 'IndRNN': IndRNN, 'AdamW': AdamW, 'SGDW': SGDW}
+print('current path %s\n' % os.getcwd())
 
 ###################################################################################################
 # utility functions

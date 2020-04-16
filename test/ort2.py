@@ -3,8 +3,6 @@ import time
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ['TF_KERAS'] = '1'
 os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import numpy as np
 import onnxmltools
@@ -27,9 +25,9 @@ model = Model(inputs=[i], outputs=[o])
 model.compile(loss='mse', optimizer='sgd')
 
 model.fit(x, y, epochs=1, batch_size=32)
-model.save('rnn.h5')
+model.save('model.h5')
 onnx_model = onnxmltools.convert_keras(model)
-onnxmltools.utils.save_model(onnx_model, 'rnn.onnx')
+onnxmltools.utils.save_model(onnx_model, 'model.onnx')
 
 model(x, training=False)
 ti = time.time()
@@ -39,7 +37,7 @@ print('keras time: ', time.time() - ti)
 so = ort.SessionOptions()
 so.intra_op_num_threads = 1
 so.inter_op_num_threads = 1
-sess = ort.InferenceSession("rnn.onnx", so)
+sess = ort.InferenceSession("model.onnx", so)
 for provider in sess.get_providers():
     sess.set_providers([provider])
     input_name = sess.get_inputs()[0].name

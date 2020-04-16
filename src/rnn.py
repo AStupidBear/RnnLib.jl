@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
 ###################################################################################################
-# parse args
+# args parsing
 
-import argparse
+if True:
+    import argparse
 parser = argparse.ArgumentParser(description='rnnlib')
 parser.add_argument('--model_path', type=str, default='model.h5')
 parser.add_argument('--data_path', type=str, default='train.rnn')
@@ -64,13 +65,13 @@ out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activa
 out_activation = 'tanh' if loss == 'pnl' else out_activation
 
 ###################################################################################################
-# setting envs
+# envs setting
 
-import os
+if True:
+    import os
 if layer in ('LSTM', 'GRU'):
     os.environ['TF_DISABLE_MKL'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 usegpu = os.getenv('USE_GPU', '1') == '1'
 if not usegpu:

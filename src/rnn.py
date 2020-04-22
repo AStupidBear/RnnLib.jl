@@ -508,7 +508,7 @@ class JLSequence(Sequence):
                 fid.create_dataset(label_name, data=y, chunks=(T // 2, 2 * batch_size), **hdf5plugin.Blosc('zstd'))
         self.fid = h5py.File(data_path, 'r+', rdcc_nbytes=1024**3, rdcc_nslots=100000)
         if label_name in self.fid.keys():
-            self.y = self.fid[label_name][()]
+            self.y = self.fid[label_name]
         else:
             self.y = None
         if pred_name in self.fid.keys():
@@ -519,8 +519,6 @@ class JLSequence(Sequence):
             self.w = self.fid[weight_name]
         else:
             self.w = None
-        import time;
-        ti = time.time()
         self.x = self.fid[feature_name]
         if sequence_size == 0:
             sequence_size = self.x.shape[0]

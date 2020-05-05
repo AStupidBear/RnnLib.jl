@@ -1,4 +1,5 @@
 virtualenv ${JULIA_DEPOT_PATH-~/.julia}/../.virtualenv/horovod
+source ${JULIA_DEPOT_PATH-~/.julia}/../.virtualenv/horovod/bin/activate
 pip install https://github.com/AStupidBear/tensorflow-mkl/releases/download/2.1.0/tensorflow-compat-2.1.0-cp36-cp36m-linux_x86_64.whl
 pip install https://github.com/AStupidBear/onnxruntime-dnnl/releases/download/1.2/onnxruntime_dnnl-1.2.0-cp36-cp36m-linux_x86_64.whl
 pip install keras onnx alt-model-checkpoint h5py hdf5plugin

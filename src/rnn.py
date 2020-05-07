@@ -36,7 +36,7 @@ parser.add_argument('--use_skip_conn', type=int, default=0)
 parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
-parser.add_argument('--patience', type=int, default=10)
+parser.add_argument('--patience', type=int, default=1000)
 parser.add_argument('--warmup_epochs', type=int, default=3)
 parser.add_argument('--factor', type=float, default=1)
 parser.add_argument('--commission', type=float, default=1e-4)
@@ -331,7 +331,6 @@ def ResRNN(hidden_size,
                             return_sequences=return_sequences)(o)
             if hidden_size != i.shape[-1]:
                 i = DenseMod(hidden_size)(i)
-        if use_skip_conn:
             o = add([i, o])
         return o
     return rnn
@@ -809,11 +808,11 @@ model.fit(
     epochs=epochs,
     verbose=1 if local_rank == 0 else 0,
     callbacks=callbacks,
-    validation_data=val_gen if len(val_gen) > 0 else None,
+    validation_data=val_gen if len(val_gen) > 1 else None,
     shuffle=True,
     initial_epoch=resume_from_epoch,
     steps_per_epoch=len(trn_gen) // world_size,
-    validation_steps=len(val_gen) // world_size,
+    validation_steps=10 * len(val_gen) // world_size,
     workers=0 if loss == 'direct' else 4
 )
 base_model.save(model_path)

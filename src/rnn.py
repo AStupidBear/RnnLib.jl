@@ -811,8 +811,8 @@ model.fit(
     validation_data=val_gen,
     shuffle=True,
     initial_epoch=resume_from_epoch,
-    steps_per_epoch=len(gen) // world_size,
+    steps_per_epoch=len(trn_gen) // world_size,
     validation_steps=len(val_gen) // world_size,
-    workers=0 if loss == 'direct' else 4,
+    workers=0 if loss == 'direct' else min(len(trn_gen), 4)
 )
 base_model.save(model_path)

@@ -326,10 +326,11 @@ def ResRNN(hidden_size,
     def rnn(i):
         o = eval(layer)(hidden_size, dropout=dropout,
                         return_sequences=return_sequences)(i)
-        o = eval(layer)(hidden_size, dropout=dropout,
-                        return_sequences=return_sequences)(i)
-        if hidden_size != i.shape[-1]:
-            i = DenseMod(hidden_size)(i)
+        if use_skip_conn:
+            o = eval(layer)(hidden_size, dropout=dropout,
+                            return_sequences=return_sequences)(o)
+            if hidden_size != i.shape[-1]:
+                i = DenseMod(hidden_size)(i)
         if use_skip_conn:
             o = add([i, o])
         return o

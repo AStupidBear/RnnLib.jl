@@ -145,7 +145,7 @@ def OnnxConv(*args, **kwargs):
     def conv(o):
         for i in range(10):
             o = Conv1D(10, 3, padding='causal')(o)
-            o = Activation('swish')(o)
+            o = Activation('relu')(o)
         return o
     return conv
 
@@ -161,7 +161,7 @@ def ResNet(filters,
         o = Conv1D(filters, factor * kernel_size - 1, padding=padding)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         return o
@@ -179,7 +179,7 @@ def ResNet(filters,
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if return_sequences:
@@ -197,7 +197,7 @@ def MLP(hidden_size,
         o = Dense(hidden_size)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         if dropout > 0:
             o = Dropout(dropout)(o)
         return o
@@ -212,7 +212,7 @@ def Conv(filters,
         o = Conv1D(filters, 1, padding='causal')(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if not return_sequences:
@@ -276,7 +276,7 @@ def Inception(filters,
         o = concatenate(conv_list)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         return o
 
     def inception(i):
@@ -287,7 +287,7 @@ def Inception(filters,
         if use_batch_norm:
             i = BatchNormalization()(i)
         o = add([i, o])
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if return_sequences:
@@ -309,7 +309,7 @@ def TCN(filters,
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
-                    use_batch_norm=use_batch_norm, activation='swish', return_sequences=True)(i)
+                    use_batch_norm=use_batch_norm, activation='relu', return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
         else:
@@ -353,7 +353,7 @@ def AHLN(hidden_size,
             o = DenseMod(hidden_size)(o)
             if use_batch_norm:
                 o = BatchNormalization()(o)
-            o = Activation('swish')(o)
+            o = Activation('relu')(o)
             if dropout > 0:
                 o = SpatialDropout1D(dropout)(o)
         if hidden_size != i.shape[-1]:
@@ -362,7 +362,7 @@ def AHLN(hidden_size,
             i = BatchNormalization()(i)
         if use_skip_conn:
             o = add([i, o])
-        o = Activation('swish')(o)
+        o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         if not return_sequences:
@@ -408,9 +408,9 @@ def CausalMinPooling1D(pool_size):
 def DenseMod(units):
     def densemod(i):
         if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
-            return Conv1D(units, 1, padding='causal', activation='swish')(i)
+            return Conv1D(units, 1, padding='causal', activation='relu')(i)
         else:
-            return Dense(units, activation='swish')(i)
+            return Dense(units, activation='relu')(i)
     return densemod
 
 
@@ -704,7 +704,7 @@ for (l, h) in enumerate(hidden_sizes):
             o = Rocket(h, pool_size, max_dilation, kernel_sizes,
                        return_sequences=return_sequences)(o)
         else:
-            o = DenseMod(h, activation='swish')(o)
+            o = DenseMod(h, activation='relu')(o)
     elif layer == 'TCN':
         o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout,
                 use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)

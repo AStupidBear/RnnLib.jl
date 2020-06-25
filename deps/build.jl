@@ -1,7 +1,6 @@
 using PyCall: python
 
-run(`$python -m pip install https://github.com/AStupidBear/onnxruntime-dnnl/releases/download/1.2/onnxruntime_dnnl-1.2.0-cp36-cp36m-linux_x86_64.whl`)
-run(`$python -m pip install tensorflow keras onnx alt-model-checkpoint h5py hdf5plugin`)
+run(`$python -m pip install tensorflow keras onnx onnxruntime alt-model-checkpoint h5py hdf5plugin`)
 run(`$python -m pip install --no-cache-dir horovod`)
 run(`$python -m pip install https://github.com/philipperemy/keras-tcn/archive/master.zip`)
 run(`$python -m pip install https://github.com/OverLordGoldDragon/keras-adamw/archive/master.zip`)

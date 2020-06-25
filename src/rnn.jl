@@ -24,7 +24,7 @@ function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
     args = ["--$k=$v" for (k, v) in config]
-    run(`python $rnnpy --data_path $h5 --test 1 $args...`)
+    run(`python $rnnpy --data_path $h5 --test 1 $args`)
     return h5
 end
 

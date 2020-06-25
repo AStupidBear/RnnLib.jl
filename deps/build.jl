@@ -8,4 +8,4 @@ run(`$python -m pip install https://github.com/OverLordGoldDragon/keras-adamw/ar
 run(`$python -m pip install https://github.com/microsoft/onnxconverter-common/archive/master.zip`)
 run(`$python -m pip install https://github.com/onnx/onnxmltools/archive/master.zip`)
 run(`$python -m pip install https://github.com/onnx/keras-onnx/archive/master.zip`)
-run(`$python -m pip install numba==0.41 llvmlite==0.26 numpy==1.17.0`)
+run(`$python -m pip install numba==0.41 llvmlite==0.26`)

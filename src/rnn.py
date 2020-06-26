@@ -17,6 +17,7 @@ parser.add_argument('--pred_name', default='p')
 parser.add_argument('--warm_start', action='store_true')
 parser.add_argument('--reset_epoch', action='store_true')
 parser.add_argument('--test', action='store_true')
+parser.add_argument('--prefetch', action='store_true')
 parser.add_argument('--optimizer', type=str, default='AdamW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
@@ -47,8 +48,8 @@ parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
 model_path, data_path, pred_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.pred_path, args.ckpt_fmt, args.log_dir
 feature_name, label_name, weight_name, pred_name = args.feature_name, args.label_name, args.weight_name, args.pred_name
-warm_start, reset_epoch, test, optimizer, lr = args.warm_start, args.reset_epoch, args.test, args.optimizer, args.lr
-batch_size, sequence_size, epochs = args.batch_size, args.sequence_size, args.epochs
+warm_start, reset_epoch, test, prefetch = args.warm_start, args.reset_epoch, args.test, args.prefetch
+lr, optimizer, batch_size, sequence_size, epochs = args.lr, args.optimizer, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
 use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
@@ -505,7 +506,7 @@ def nan_to_num(x):
 
 class JLSequence(Sequence):
 
-    def __init__(self, data_path, sequence_size, batch_size, logger):
+    def __init__(self, data_path, sequence_size, batch_size, logger, prefetch):
         self.sess = tf.compat.v1.keras.backend.get_session()
         if not os.path.isfile(data_path):
             F, N, T = 30, 3000, 4802
@@ -528,6 +529,8 @@ class JLSequence(Sequence):
         else:
             self.w = None
         self.x = self.fid[feature_name]
+        if prefetch:
+            self.x = self.x[()]
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
@@ -673,7 +676,7 @@ elif os.getenv('USE_NGRAPH', '0') == '1':
 
 # load hdf5 data or generate dummy data
 logger = CustomProgbarLogger()
-gen = JLSequence(data_path, sequence_size, batch_size, logger)
+gen = JLSequence(data_path, sequence_size, batch_size, logger, prefetch)
 trn_gen, val_gen = gen.split(validation_split)
 
 ###################################################################################################
@@ -829,6 +832,6 @@ model.fit(
     initial_epoch=resume_from_epoch,
     steps_per_epoch=len(trn_gen) // world_size,
     validation_steps=len(val_gen) // world_size,
-    workers=0 if loss == 'direct' else 0
+    workers=0 if loss == 'direct' else 4
 )
 base_model.save(model_path)

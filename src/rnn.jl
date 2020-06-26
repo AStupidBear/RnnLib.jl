@@ -11,9 +11,11 @@ RnnModel(;ka...) = RnnModel(UInt8[], Dict(k => string(v) for (k, v) in ka))
 RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
+concat_config(config) = reduce(vcat, [v == "true" ? ["--$k"] : v == "false" ? [] : ["--$k", v] for (k, v) in config])
+
 function fit!(m::RnnModel, h5::String)
     @unpack rnn, config = m
-    args = vcat([v == "true" ? ["--$k"] : ["--$k", v] for (k, v) in config]...)
+    args = concat_config(config)
     cmd = `python $rnnpy --data_path $h5 $args`
     println(cmd); run(cmd)
     m.rnn = read("model.h5")
@@ -23,7 +25,7 @@ end
 function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
-    args = vcat([v == "true" ? ["--$k"] : ["--$k", v] for (k, v) in config]...)
+    args = concat_config(config)
     h5p = joinpath(dirname(h5), randstring())
     run(`python $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
     return h5p

@@ -16,7 +16,7 @@ parser.add_argument('--label_name', default='y')
 parser.add_argument('--weight_name', default='w')
 parser.add_argument('--pred_name', default='p')
 parser.add_argument('--warm_start', type=int, default=0)
-parser.add_argument('--test', type=int, default=0)
+parser.add_argument('--test', action='store_true',)
 parser.add_argument('--optimizer', type=str, default='AdamW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
@@ -653,7 +653,7 @@ except:
 
 # set gpu specific options
 gpus = tf.config.list_physical_devices('GPU')
-if test == 0 and usegpu and gpus:
+if not test and usegpu and gpus:
     tf.config.experimental.set_visible_devices(
         gpus[local_rank % len(gpus)], 'GPU')
     for gpu in gpus:
@@ -672,7 +672,7 @@ trn_gen, val_gen = gen.split(validation_split)
 ###################################################################################################
 # model testing
 
-if test == 1:
+if test:
     model = load_model(model_path, compile=False)
     gen.fill_pred(model.predict(gen))
     exit()

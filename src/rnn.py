@@ -2,7 +2,6 @@
 
 ###################################################################################################
 # args parsing
-
 if True:
     import argparse
 parser = argparse.ArgumentParser(description='rnnlib')
@@ -78,6 +77,8 @@ usegpu = os.getenv('USE_GPU', '1') == '1'
 if not usegpu:
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
+import logging
+logging.getLogger('tensorflow').disabled = True
 
 ###################################################################################################
 # package loading
@@ -121,7 +122,6 @@ if os.getenv('TF_EAGER', '0') == '0':
     tf.compat.v1.disable_eager_execution()
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
-print('current path %s\n' % os.getcwd())
 
 ###################################################################################################
 # utility functions
@@ -520,7 +520,7 @@ class JLSequence(Sequence):
             self.w = self.fid[weight_name]
         else:
             self.w = None
-        self.x = self.fid[feature_name]
+        self.x = self.fid[feature_name][()]
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size

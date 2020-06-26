@@ -13,7 +13,7 @@ RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
 function fit!(m::RnnModel, h5::String)
     @unpack rnn, config = m
-    args = vcat([["--$k", v] for (k, v) in config]...)
+    args = vcat([v == "true" ? ["--$k"] : ["--$k", v] for (k, v) in config]...)
     cmd = `python $rnnpy --data_path $h5 $args`
     println(cmd); run(cmd)
     m.rnn = read("model.h5")
@@ -23,7 +23,7 @@ end
 function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
-    args = ["--$k=$v" for (k, v) in config]
+    args = vcat([v == "true" ? ["--$k"] : ["--$k", v] for (k, v) in config]...)
     h5p = joinpath(dirname(h5), randstring())
     run(`python $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
     return h5p

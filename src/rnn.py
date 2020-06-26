@@ -15,8 +15,9 @@ parser.add_argument('--feature_name', default='x')
 parser.add_argument('--label_name', default='y')
 parser.add_argument('--weight_name', default='w')
 parser.add_argument('--pred_name', default='p')
-parser.add_argument('--warm_start', type=int, default=0)
-parser.add_argument('--test', action='store_true',)
+parser.add_argument('--warm_start', action='store_true')
+parser.add_argument('--reset_epoch', action='store_true')
+parser.add_argument('--test', action='store_true')
 parser.add_argument('--optimizer', type=str, default='AdamW')
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--sequence_size', type=int, default=0)
@@ -47,7 +48,7 @@ parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
 model_path, data_path, pred_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.pred_path, args.ckpt_fmt, args.log_dir
 feature_name, label_name, weight_name, pred_name = args.feature_name, args.label_name, args.weight_name, args.pred_name
-warm_start, test, optimizer, lr = args.warm_start, args.test, args.optimizer, args.lr
+warm_start, reset_epoch, test, optimizer, lr = args.warm_start, args.reset_epoch, args.test, args.optimizer, args.lr
 batch_size, sequence_size, epochs = args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
@@ -728,16 +729,18 @@ model = Model(inputs=[i], outputs=[o])
 
 # warm start
 resume_from_epoch = 0
-if warm_start == 1:
+if warm_start:
     for try_epoch in range(epochs, 0, -1):
         h5 = log_dir + '/' + ckpt_fmt.format(epoch=try_epoch)
         if os.path.isfile(h5):
             resume_from_epoch = try_epoch
-            model = load_model(h5)
+            model = load_model(h5, compile=False)
             break
 else:
     import shutil
     shutil.rmtree(log_dir, ignore_errors=True)
+if reset_epoch:
+    resume_from_epoch = 0
 
 # multi-gpu
 base_model = model
@@ -818,7 +821,7 @@ model.fit(
     shuffle=True,
     initial_epoch=resume_from_epoch,
     steps_per_epoch=len(trn_gen) // world_size,
-    validation_steps=10 * len(val_gen) // world_size,
+    validation_steps=len(val_gen) // world_size,
     workers=0 if loss == 'direct' else 4
 )
 base_model.save(model_path)

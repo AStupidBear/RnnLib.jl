@@ -496,6 +496,13 @@ def direct_loss(r, z, λ=pnl_scale, c=commission, η=close_thresh):
 ###################################################################################################
 # custom data loader
 
+@jit(nopython=True)
+def nan_to_num(x):
+    for i in range(x.shape[0]):
+        xi = x[i]
+        x[i] = 0 if np.isnan(xi) else xi
+    return x
+
 class JLSequence(Sequence):
 
     def __init__(self, data_path, sequence_size, batch_size, logger):
@@ -517,10 +524,10 @@ class JLSequence(Sequence):
         else:
             self.p = None
         if weight_name in self.fid.keys():
-            self.w = self.fid[weight_name]
+            self.w = self.fid[weight_name][()]
         else:
             self.w = None
-        self.x = self.fid[feature_name][()]
+        self.x = self.fid[feature_name]
         if sequence_size == 0:
             sequence_size = self.x.shape[0]
         self.sequence_size = sequence_size
@@ -550,7 +557,7 @@ class JLSequence(Sequence):
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
         ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
         x = self.x[ts, ns, :].swapaxes(0, 1)
-        x = np.nan_to_num(x, posinf=0, neginf=0)
+        nan_to_num(x.reshape(-1))
         if x.dtype == 'uint8':
             x = x / 128 - 1
         if self.y is not None:
@@ -822,6 +829,6 @@ model.fit(
     initial_epoch=resume_from_epoch,
     steps_per_epoch=len(trn_gen) // world_size,
     validation_steps=len(val_gen) // world_size,
-    workers=0 if loss == 'direct' else 4
+    workers=0 if loss == 'direct' else 0
 )
 base_model.save(model_path)

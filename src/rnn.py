@@ -47,14 +47,13 @@ parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
 model_path, data_path, pred_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.pred_path, args.ckpt_fmt, args.log_dir
 feature_name, label_name, weight_name, pred_name = args.feature_name, args.label_name, args.weight_name, args.pred_name
-warm_start, test, optimizer =  args.warm_start, args.test, args.optimizer
-lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
+warm_start, test, optimizer, lr = args.warm_start, args.test, args.optimizer, args.lr
+batch_size, sequence_size, epochs = args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
 use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
-out_dim, validation_split, patience = args.out_dim, args.validation_split, args.patience
-warmup_epochs, factor, commission = args.warmup_epochs, args.factor, args.commission
-pnl_scale, close_thresh, eta = args.pnl_scale, args.close_thresh, args.eta
+out_dim, validation_split, patience, warmup_epochs = args.out_dim, args.validation_split, args.patience, args.warmup_epochs
+factor, commission, pnl_scale, close_thresh, eta = args.factor, args.commission, args.pnl_scale, args.close_thresh, args.eta
 hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
 kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 

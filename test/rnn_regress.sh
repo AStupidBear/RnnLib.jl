@@ -1,6 +1,7 @@
 #!/bin/bash
-USE_GPU=0 python $(dirname $0)/../src/rnn.py \
-    --data_path=/mnt/ST8000/rnn_regress.h5 \
+dir=$(dirname $0)
+USE_GPU=0 python $dir/../src/rnn.py \
+    --data_path=$HOME/job/rnn_regress.h5 \
     --hidden_sizes=100,100,10 \
     --layer=GRU \
     --sequence_size=500 \

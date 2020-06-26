@@ -24,8 +24,9 @@ function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
     args = ["--$k=$v" for (k, v) in config]
-    run(`python $rnnpy --data_path $h5 --test 1 $args`)
-    return h5
+    h5p = joinpath(dirname(h5), randstring())
+    run(`python $rnnpy --data_path $h5 --pred_path $h5p --test 1 $args`)
+    return h5p
 end
 
 function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)

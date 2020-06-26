@@ -8,6 +8,7 @@ if True:
 parser = argparse.ArgumentParser(description='rnnlib')
 parser.add_argument('--model_path', type=str, default='model.h5')
 parser.add_argument('--data_path', type=str, default='train.rnn')
+parser.add_argument('--pred_path', type=str, default='pred.rnn')
 parser.add_argument('--ckpt_fmt', default='ckpt-{epoch}.h5')
 parser.add_argument('--log_dir', default='logs')
 parser.add_argument('--feature_name', default='x')
@@ -44,9 +45,9 @@ parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--close_thresh', type=float, default=0.5)
 parser.add_argument('--eta', type=float, default=0.1)
 args = parser.parse_args()
-model_path, data_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.ckpt_fmt, args.log_dir
-feature_name, label_name, weight_name = args.feature_name, args.label_name, args.weight_name
-pred_name, warm_start, test, optimizer = args.pred_name, args.warm_start, args.test, args.optimizer
+model_path, data_path, pred_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.pred_path, args.ckpt_fmt, args.log_dir
+feature_name, label_name, weight_name, pred_name = args.feature_name, args.label_name, args.weight_name, args.pred_name
+warm_start, test, optimizer =  args.warm_start, args.test, args.optimizer
 lr, batch_size, sequence_size, epochs = args.lr, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
 pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
@@ -530,6 +531,7 @@ class JLSequence(Sequence):
         self.end = self.n_sequences * self.n_batches
         self.logger = logger
         self.out_seq = self.y.shape[0] == self.x.shape[0]
+        print('JLSequence shape: (', self.n_batches, 'x', self.batch_size, ',', self.n_sequences, 'x', self.sequence_size, ')')
         if out_dim < 1:
             if self.out_seq:
                 self.out_dim = self.y.shape[-1] if self.y.ndim == 3 else 1
@@ -548,6 +550,7 @@ class JLSequence(Sequence):
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
         ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
         x = self.x[ts, ns, :].swapaxes(0, 1)
+        x = np.nan_to_num(x, posinf=0, neginf=0)
         if x.dtype == 'uint8':
             x = x / 128 - 1
         if self.y is not None:
@@ -602,12 +605,16 @@ class JLSequence(Sequence):
             ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
             ns = slice(self.batch_size * n, self.batch_size * (n + 1))
             ns = range(ns.start, min(ns.stop, self.x.shape[1]))
-            y = pred[npred:(npred + len(ns)), :, 0:self.p.shape[2]]
+            y = pred[npred:(npred + len(ns)), :, :]
             if not self.p:
                 shape = (*self.x.shape[:2], y.shape[-1])
-                self.fid.create_dataset(pred_name, shape, dtype='float')
+                self.fid_pred = h5py.File(pred_path, 'w')
+                self.fid_pred.create_dataset(pred_name, shape, dtype='float32')
+                self.p = self.fid_pred[pred_name]
+            else:
+                self.fid_pred = self.fid
             self.p[ts, ns, :] = y.swapaxes(0, 1)
-            self.fid.flush()
+            self.fid_pred.flush()
             npred += len(ns)
 
 
@@ -666,7 +673,7 @@ trn_gen, val_gen = gen.split(validation_split)
 # model testing
 
 if test == 1:
-    model = load_model(model_path)
+    model = load_model(model_path, compile=False)
     gen.fill_pred(model.predict(gen))
     exit()
 

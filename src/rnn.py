@@ -563,7 +563,6 @@ class JLSequence(Sequence):
         import time
         ti  = time.time()
         x = self.x[ts, ns, :].swapaxes(0, 1)
-        print(time.time() - ti)
         nan_to_num(x.reshape(-1))
         if x.dtype == 'uint8':
             x = x / 128 - 1

@@ -515,38 +515,30 @@ class JLSequence(Sequence):
                 y = np.mean(x, axis=2)
                 fid.create_dataset(feature_name, data=x, chunks=(T // 2, 2 * batch_size, F), **hdf5plugin.Blosc('zstd'))
                 fid.create_dataset(label_name, data=y, chunks=(T // 2, 2 * batch_size), **hdf5plugin.Blosc('zstd'))
-        self.fid = h5py.File(data_path, 'r+', rdcc_nbytes=1024**3, rdcc_nslots=100000)
-        if label_name in self.fid.keys():
-            self.y = self.fid[label_name]
-        else:
-            self.y = None
-        if pred_name in self.fid.keys():
-            self.p = self.fid[pred_name]
-        else:
-            self.p = None
-        if weight_name in self.fid.keys():
-            self.w = self.fid[weight_name][()]
-        else:
-            self.w = None
-        self.x = self.fid[feature_name]
-        if prefetch:
-            self.x = self.x[()]
+        with h5py.File(data_path, 'r') as fid:
+            self.xshape = fid[feature_name].shape
+            self.yshape = fid[label_name].shape
+            self.x = None
+            self.y = fid[label_name] if label_name in fid.keys() else None
+            self.w = fid[weight_name] if weight_name in fid.keys() else None
+        self.data_path = data_path
         if sequence_size == 0:
-            sequence_size = self.x.shape[0]
+            sequence_size = self.xshape[0]
         self.sequence_size = sequence_size
         self.batch_size = batch_size
-        self.n_sequences = math.floor(self.x.shape[0] / sequence_size)
-        self.n_batches = math.ceil(self.x.shape[1] / batch_size)
+        self.n_sequences = math.floor(self.xshape[0] / self.sequence_size)
+        self.n_batches = math.ceil(self.xshape[1] / batch_size)
         self.start = 0
         self.end = self.n_sequences * self.n_batches
         self.logger = logger
-        self.out_seq = self.y.shape[0] == self.x.shape[0]
+        self.prefetch = prefetch
+        self.out_seq = self.yshape[0] == self.xshape[0]
         print('JLSequence shape: (', self.n_batches, 'x', self.batch_size, ',', self.n_sequences, 'x', self.sequence_size, ')')
         if out_dim < 1:
             if self.out_seq:
-                self.out_dim = self.y.shape[-1] if self.y.ndim == 3 else 1
+                self.out_dim = self.yshape[-1] if len(self.yshape) == 3 else 1
             else:
-                self.out_dim = self.y.shape[-1] if self.y.ndim == 2 else 1
+                self.out_dim = self.yshape[-1] if len(self.yshape) == 2 else 1
         else:
             self.out_dim = out_dim
 
@@ -558,13 +550,25 @@ class JLSequence(Sequence):
         n, t = idx % self.n_batches, idx // self.n_batches
         ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
-        ns = slice(ns.start, min(ns.stop, self.x.shape[1]))
+        ns = slice(ns.start, min(ns.stop, self.xshape[1]))
+        if not self.x:
+            fid = h5py.File(self.data_path, 'r', rdcc_nbytes=1024**3, rdcc_nslots=100000)
+            self.x = fid[feature_name]
+            self.y = fid[label_name] if label_name in fid.keys() else None
+            self.w = fid[weight_name] if weight_name in fid.keys() else None
+            if prefetch:
+                self.x = self.x[()]
+                self.y = self.y[()] if self.y else None
+                self.w = self.w[()] if self.w else None
+        import time
+        ti  = time.time()
         x = self.x[ts, ns, :].swapaxes(0, 1)
+        print(time.time() - ti)
         nan_to_num(x.reshape(-1))
         if x.dtype == 'uint8':
             x = x / 128 - 1
         if self.y is not None:
-            if self.y.shape[0] == self.x.shape[0]:
+            if self.y.shape[0] == self.xshape[0]:
                 y = self.y[ts, ns].swapaxes(0, 1)
                 y = y.reshape(*y.shape[:2], -1)
             else:
@@ -573,7 +577,7 @@ class JLSequence(Sequence):
         else:
             y = None
         if self.w is not None:
-            if self.w.shape[0] == self.x.shape[0]:
+            if self.w.shape[0] == self.xshape[0]:
                 w = self.w[ts, ns].swapaxes(0, 1)
             else:
                 w = self.w[ns]
@@ -614,16 +618,14 @@ class JLSequence(Sequence):
             n, t = idx % self.n_batches, idx // self.n_batches
             ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
             ns = slice(self.batch_size * n, self.batch_size * (n + 1))
-            ns = range(ns.start, min(ns.stop, self.x.shape[1]))
+            ns = range(ns.start, min(ns.stop, self.xshape[1]))
             y = pred[npred:(npred + len(ns)), :, :]
-            if not self.p:
-                shape = (*self.x.shape[:2], y.shape[-1])
+            shape = (*self.xshape[:2], y.shape[-1])
+            if not self.pred:
                 self.fid_pred = h5py.File(pred_path, 'w')
                 self.fid_pred.create_dataset(pred_name, shape, dtype='float32')
-                self.p = self.fid_pred[pred_name]
-            else:
-                self.fid_pred = self.fid
-            self.p[ts, ns, :] = y.swapaxes(0, 1)
+                self.pred = self.fid_pred[pred_name]
+            self.pred[ts, ns, :] = y.swapaxes(0, 1)
             self.fid_pred.flush()
             npred += len(ns)
 
@@ -691,7 +693,7 @@ if test:
 # model building
 
 # expected input batch shape: (N, T, F)
-T, N, F = gen.x.shape
+T, N, F = gen.xshape
 pool_size = min(T // 3, pool_size)
 max_dilation = min(T // kernel_size, max_dilation)
 if layer == 'MLP':
@@ -832,6 +834,7 @@ model.fit(
     initial_epoch=resume_from_epoch,
     steps_per_epoch=len(trn_gen) // world_size,
     validation_steps=len(val_gen) // world_size,
-    workers=0 if loss == 'direct' else 4
+    workers=0 if loss == 'direct' else 4,
+    use_multiprocessing=True
 )
 base_model.save(model_path)

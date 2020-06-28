@@ -551,7 +551,7 @@ class JLSequence(Sequence):
         ts = slice(self.sequence_size * t, self.sequence_size * (t + 1))
         ns = slice(self.batch_size * n, self.batch_size * (n + 1))
         ns = slice(ns.start, min(ns.stop, self.xshape[1]))
-        if not self.x:
+        if self.x is None:
             fid = h5py.File(self.data_path, 'r', rdcc_nbytes=1024**3, rdcc_nslots=100000)
             self.x = fid[feature_name]
             self.y = fid[label_name] if label_name in fid.keys() else None
@@ -620,7 +620,7 @@ class JLSequence(Sequence):
             ns = range(ns.start, min(ns.stop, self.xshape[1]))
             y = pred[npred:(npred + len(ns)), :, :]
             shape = (*self.xshape[:2], y.shape[-1])
-            if not self.pred:
+            if self.pred is None:
                 self.fid_pred = h5py.File(pred_path, 'w')
                 self.fid_pred.create_dataset(pred_name, shape, dtype='float32')
                 self.pred = self.fid_pred[pred_name]
@@ -780,7 +780,7 @@ if local_rank == 0:
 
 # optimizer
 weight_decays = {l: l2 for l in get_weight_decays(model)}
-if not base_model.optimizer:
+if base_model.optimizer is None:
     # Horovod: adjust learning rate based on number of GPUs.
     if optimizer == 'SGDW':
         opt = SGDW(10 * lr * world_size, momentum = 0.9, nesterov=True, weight_decays=weight_decays)

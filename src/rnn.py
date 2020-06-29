@@ -378,6 +378,8 @@ def CausalAveragePooling1D(pool_size):
         if pool_size > 1:
             o = Lambda(lambda x: K.temporal_padding(x, (pool_size - 1, 0)))(i)
             o = AveragePooling1D(pool_size, strides=1, padding='valid')(o)
+            scale = tf.reshape(pool_size / tf.range(1, pool_size+1, dtype=o.dtype), (1, pool_size, 1))
+            o = tf.concat([scale * o[:, :pool_size, :], o[:, pool_size:, :]], axis=1)
         else:
             o = i
         return o
@@ -809,6 +811,7 @@ lossf = eval(loss) if loss in ('pnl', 'direct') else loss
 model.compile(loss=lossf, optimizer=opt, metrics=metric,
               sample_weight_mode=sample_weight_mode,
               experimental_run_tf_function=False)
+# model.run_eagerly = True
 
 ###################################################################################################
 # model building

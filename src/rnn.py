@@ -503,7 +503,12 @@ def direct_loss(r, z, λ=pnl_scale, c=commission, η=close_thresh):
 def nan_to_num(x):
     for i in range(x.shape[0]):
         xi = x[i]
-        x[i] = 0 if np.isnan(xi) else xi
+        if np.isnan(xi):
+            x[i] = 0
+        elif xi < -4:
+            x[i] = -4
+        elif xi > 4:
+            x[i] = 4
     return x
 
 class JLSequence(Sequence):
@@ -565,9 +570,10 @@ class JLSequence(Sequence):
         import time
         ti  = time.time()
         x = self.x[ts, ns, :].swapaxes(0, 1)
-        nan_to_num(x.reshape(-1))
         if x.dtype == 'uint8':
             x = x / 128 - 1
+        else:
+            nan_to_num(x.reshape(-1))
         if self.y is not None:
             if self.y.shape[0] == self.xshape[0]:
                 y = self.y[ts, ns].swapaxes(0, 1)

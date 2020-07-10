@@ -208,7 +208,7 @@ def Conv(filters,
          use_batch_norm=True,
          return_sequences=False):
     def conv(i):
-        o = Conv1D(filters, 1, padding='causal')(i)
+        o = TimeDense(filters)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
         o = Activation('relu')(o)
@@ -349,14 +349,14 @@ def AHLN(hidden_size,
             pool_list.append(CausalMinPooling1D(pool_size)(i))
         o = Concatenate()(pool_list)
         for n in range(2):
-            o = DenseMod(hidden_size)(o)
+            o = TimeDense(hidden_size)(o)
             if use_batch_norm:
                 o = BatchNormalization()(o)
             o = Activation('relu')(o)
             if dropout > 0:
                 o = SpatialDropout1D(dropout)(o)
         if o.shape[-1] != i.shape[-1]:
-            i = DenseMod(o.shape[-1])(i)
+            i = TimeDense(o.shape[-1])(i)
         if use_batch_norm:
             i = BatchNormalization()(i)
         if use_skip_conn:
@@ -406,13 +406,13 @@ def CausalMinPooling1D(pool_size):
     return pool
 
 
-def DenseMod(units, activation=None):
-    def densemod(i):
+def TimeDense(units, activation=None):
+    def timedense(i):
         if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
             return Conv1D(units, 1, padding='causal', activation=activation)(i)
         else:
             return Dense(units, activation=activation)(i)
-    return densemod
+    return timedense
 
 
 ###################################################################################################
@@ -728,7 +728,7 @@ for (l, h) in enumerate(hidden_sizes):
             o = Rocket(h, pool_size, max_dilation, kernel_sizes,
                        return_sequences=return_sequences)(o)
         else:
-            o = DenseMod(h, activation='relu')(o)
+            o = TimeDense(h, activation='relu')(o)
     elif layer == 'TCN':
         o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_skip_conn=use_skip_conn,
                 use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
@@ -738,7 +738,7 @@ for (l, h) in enumerate(hidden_sizes):
     else:
         o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,
                    use_skip_conn=use_skip_conn, layer=layer)(o)
-o = Activation(out_activation, dtype='float')(DenseMod(gen.out_dim)(o))
+o = Activation(out_activation, dtype='float')(TimeDense(gen.out_dim)(o))
 if loss == 'direct':
     o = Concatenate()([o, o, o])
 model = Model(inputs=[i], outputs=[o])

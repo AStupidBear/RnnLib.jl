@@ -29,12 +29,12 @@ parser.add_argument('--hidden_sizes', type=str, default='128')
 parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
+parser.add_argument('--recept_field', type=int, default=64)
 parser.add_argument('--pool_size', type=int, default=1)
-parser.add_argument('--max_dilation', type=int, default=64)
 parser.add_argument('--l2', type=float, default=0)
 parser.add_argument('--dropout', type=float, default=0)
-parser.add_argument('--use_batch_norm', type=int, default=0)
-parser.add_argument('--use_skip_conn', type=int, default=0)
+parser.add_argument('--use_batch_norm', action='store_true')
+parser.add_argument('--use_skip_conn', action='store_true')
 parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
@@ -52,7 +52,7 @@ feature_name, label_name, weight_name, pred_name = args.feature_name, args.label
 warm_start, reset_epoch, test, prefetch = args.warm_start, args.reset_epoch, args.test, args.prefetch
 lr, optimizer, batch_size, sequence_size, epochs = args.lr, args.optimizer, args.batch_size, args.sequence_size, args.epochs
 layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
-pool_size, max_dilation, dropout, l2 = args.pool_size, args.max_dilation, args.dropout, args.l2
+recept_field, pool_size, dropout, l2 = args.recept_field, args.pool_size, args.dropout, args.l2
 use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
 out_dim, validation_split, patience, warmup_epochs = args.out_dim, args.validation_split, args.patience, args.warmup_epochs
 factor, commission, pnl_scale, close_thresh, eta = args.factor, args.commission, args.pnl_scale, args.close_thresh, args.eta
@@ -107,7 +107,7 @@ from tensorflow.keras.initializers import RandomNormal, RandomUniform
 from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      BatchNormalization, Conv1D, Dense,
                                      Dropout, Flatten, GlobalAveragePooling1D,
-                                     GlobalMaxPooling1D, Lambda, Layer,
+                                     GlobalMaxPooling1D, Lambda, Layer, RNN,
                                      MaxPooling1D, SpatialDropout1D,
                                      TimeDistributed, Add, Concatenate)
 from tensorflow.keras.models import load_model
@@ -221,27 +221,19 @@ def Conv(filters,
 
 
 def Rocket(filters,
+           recept_field,
            pool_size,
-           max_dilation,
            kernel_sizes=(7, 9, 11),
            padding='causal',
            return_sequences=False):
     def rocket(i):
         outs = []
-        dilations = [2**n for n in range(10) if 2**n <= max_dilation]
-        filters_ = int(100 * filters / len(dilations) / len(kernel_sizes))
-        if filters_ > 1:
-            for kernel_size in kernel_sizes:
-                for dilation in dilations:
-                    o = Conv1D(filters_, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
-                               kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
-                    outs.append(o)
-        else:
-            for n in range(100 * filters):
-                kernel_size = int(np.random.choice(kernel_sizes))
-                dilation = int(np.random.choice(dilations))
-                o = Conv1D(1, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
-                           kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
+        for kernel_size in kernel_sizes:
+            dilations = [2**n for n in range(10) if 2**n * kernel_size <= recept_field]
+            filters_ = int(100 * filters / len(dilations) / len(kernel_sizes))
+            for dilation in dilations:
+                o = Conv1D(filters_, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
+                            kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
                 outs.append(o)
         o = Concatenate()(outs)
         if return_sequences:
@@ -302,16 +294,16 @@ def Inception(filters,
 
 
 def TCN(filters,
+        recept_field,
         kernel_size,
         pool_size,
-        max_dilation,
         padding='causal',
         use_skip_conn=False,
         dropout=0.0,
         return_sequences=False,
         use_batch_norm=True):
     def _tcn(i):
-        dilations = [2**n for n in range(10) if 2**n <= max_dilation]
+        dilations = [2**n for n in range(10) if 2**n * kernel_size <= recept_field]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
                     use_skip_conn=use_skip_conn, use_batch_norm=use_batch_norm, activation='relu', return_sequences=True)(i)
         if return_sequences:
@@ -336,14 +328,14 @@ def ResRNN(hidden_size,
 
 
 def AHLN(hidden_size,
-         max_pool_size,
+         recept_field,
          dropout=0.0,
          return_sequences=True,
          use_batch_norm=True,
          use_skip_conn=False):
     def ahln(i):
         pool_list = [i]
-        for pool_size in [4**n for n in range(10) if 4**n <= max_pool_size]:
+        for pool_size in [4**n for n in range(10) if 4**n <= recept_field]:
             pool_list.append(CausalAveragePooling1D(pool_size)(i))
             pool_list.append(CausalMaxPooling1D(pool_size)(i))
             pool_list.append(CausalMinPooling1D(pool_size)(i))
@@ -368,6 +360,24 @@ def AHLN(hidden_size,
             o = GlobalAveragePooling1D()(o)
         return o
     return ahln
+
+
+def BRU(hidden_size, 
+        dropout=0.0,
+        return_sequences=False):
+    def bru(i):
+        cell = BRUCell(hidden_size)
+        return RNN(cell, return_sequences)(i)
+    return bru
+
+
+def nBRU(hidden_size,
+        dropout=0.0,
+        return_sequences=False):
+    def nBRU(i):
+        cell = nBRUCell(hidden_size)
+        return RNN(cell, return_sequences)(i)
+    return nBRU
 
 
 def CausalAveragePooling1D(pool_size):
@@ -700,7 +710,6 @@ if test:
 # expected input batch shape: (N, T, F)
 T, N, F = gen.xshape
 pool_size = min(T // 3, pool_size)
-max_dilation = min(T // kernel_size, max_dilation)
 if layer == 'MLP':
     o = i = Input(shape=(T, F))
     o = Flatten()(o)
@@ -725,15 +734,14 @@ for (l, h) in enumerate(hidden_sizes):
                       return_sequences=return_sequences, bottleneck_size=bottleneck_size)(o)
     elif layer == 'Rocket':
         if l == 0:
-            o = Rocket(h, pool_size, max_dilation, kernel_sizes,
-                       return_sequences=return_sequences)(o)
+            o = Rocket(h, recept_field, pool_size, kernel_sizes, return_sequences=return_sequences)(o)
         else:
             o = TimeDense(h, activation='relu')(o)
     elif layer == 'TCN':
-        o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_skip_conn=use_skip_conn,
+        o = TCN(h, kernel_size, recept_field, pool_size, dropout=dropout, use_skip_conn=use_skip_conn,
                 use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'AHLN':
-        o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm,
+        o = AHLN(h, recept_field, dropout=dropout, use_batch_norm=use_batch_norm,
                  use_skip_conn=use_skip_conn, return_sequences=return_sequences)(o)
     else:
         o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,

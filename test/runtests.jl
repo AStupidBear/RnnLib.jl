@@ -4,27 +4,27 @@ using Random
 using Statistics
 using Test
 
-ENV["USE_GPU"] = 0
-
 cd(mktempdir())
 
-F, N, T = 3, 100, 100
+F, N, T = 3, 32, 100
 Random.seed!(1234)
-x = rand(UInt8, F, N, T)
-y = mean(x, dims = 1)
-y = mean(x ./ 128 .- 1, dims = 1)
-w = rand(Float32, N, T)
+x = randn(Float32, F, N, T)
+y = mean(x, dims = 1) * √F
+w = ones(Float32, N, T)
 
-for layer in ["ResNet", "Inception", "TCN", "Rocket"]
-    model = RnnRegressor(layer = layer, hidden_sizes = "5", epochs = 200, validation_split = 0)
+layer, binary = "Conv", true
+for layer in ["Conv", "ResNet", "Inception", "TCN", "Rocket", "LSTM", "GRU", "IndRNN"]
+    model = RnnRegressor(layer = layer, hidden_sizes = "10", epochs = 200, validation_split = 0)
     RnnLib.fit!(model, x, y, w)
     ŷ = RnnLib.predict(model, x)
-    res = mean(abs, vec(y) .- vec(ŷ))
-    @test res < 0.3
-
-    model = RnnClassifier(layer = layer, hidden_sizes = "5", epochs = 200, validation_split = 0)
+    res = mean(abs2, vec(y) .- vec(ŷ))
+    @test res < 0.1
     for binary in [true, false]
-        y′ = binary ? signone.(y) : @. ifelse(abs(y) > 0.1, sign(y) + 1.0, 1.0)
+        y′ = binary ? signone.(y) : @. ifelse(abs(y) > 0.5f0, sign(y) + 1f0, 1f0)
+        model = RnnClassifier(
+            layer = layer, hidden_sizes = "10", epochs = 200, validation_split = 0,
+            loss = binary ? "bce" : "spcce", out_dim = binary ? 1 : 3, lr = 1e-2
+        )
         RnnLib.fit!(model, x, y′, w)
         ŷ = RnnLib.predict(model, x)
         prob = RnnLib.predict_proba(model, x)
@@ -33,5 +33,5 @@ for layer in ["ResNet", "Inception", "TCN", "Rocket"]
     end
 end
 
-model = RnnClassifier(layer = "Rocket", loss = "direct", hidden_sizes = "5", epochs = 30, validation_split = 0)
-RnnLib.fit!(model, x, y, w)
+# model = RnnClassifier(layer = "Rocket", loss = "direct", hidden_sizes = "5", epochs = 300, validation_split = 0)
+# RnnLib.fit!(model, x, y, w)

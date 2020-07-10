@@ -40,11 +40,11 @@ function predict_proba(m::RnnModel, x)
     size(ŷ, 1) > 1 ? ŷ : vcat(1 .- ŷ,  ŷ)
 end
 
-function predict(m::RnnModel, x)
-    ŷ = h5read(predict(m, dump_rnn_data(x)), "p")
+function predict(m::RnnModel, a...)
+    ŷ = h5read(predict(m, dump_rnn_data(a...)), "p")
     !is_classifier(m) && return ŷ
     if size(ŷ, 1) == 1
-        signone.(ŷ .- 0.5)
+        @. ifelse(ŷ >= 0.5f0, 1f0, 0f0)
     else
         [I[1] - 1 for I in argmax(ŷ, dims = 1)]
     end

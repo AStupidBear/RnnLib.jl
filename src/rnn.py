@@ -305,7 +305,7 @@ def TCN(filters,
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n * kernel_size <= recept_field]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
-                    use_skip_conn=use_skip_conn, use_batch_norm=use_batch_norm, activation='relu', return_sequences=True)(i)
+                use_skip_connections=use_skip_conn, use_batch_norm=use_batch_norm, activation='relu', return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
         else:
@@ -628,6 +628,9 @@ class JLSequence(Sequence):
 
     def fill_pred(self, pred):
         npred = 0
+        from sklearn.metrics import accuracy_score
+        acc = accuracy_score((pred > 0.5).swapaxes(0, 1).flatten(), self.y[:, :, :].flatten())
+        print('acc..........', acc)
         for idx in range(len(self)):
             idx = idx + self.start
             n, t = idx % self.n_batches, idx // self.n_batches
@@ -760,6 +763,7 @@ if warm_start:
         if os.path.isfile(h5):
             resume_from_epoch = try_epoch
             model = load_model(h5, compile=False)
+            print('warm start...')
             break
 else:
     import shutil
@@ -838,6 +842,7 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
     print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
+print(len(trn_gen) // world_size)
 model.fit(
     x=trn_gen,
     epochs=epochs,

@@ -1,7 +1,8 @@
 import tensorflow as tf
+from tensorflow.keras.layers import Layer
 
 
-class BRUCell(tf.keras.layers.Layer):
+class BRUCell(Layer):
     def __init__(self, units, **kwargs):
         self.units = units
         self.state_size = units
@@ -41,12 +42,13 @@ class BRUCell(tf.keras.layers.Layer):
         return [tf.zeros(shape=(batch_size, self.units), dtype=dtype)]
 
     def get_config(self):
-        config = super(BRUCell, self).get_config().copy()
-        config.update({'units': self.units})
-        return config
+        config = {'units': self.units}
+        base_config = super(BRUCell, self).get_config()
+        del base_config['trainable']
+        return dict(list(base_config.items()) + list(config.items()))
 
 
-class nBRUCell(tf.keras.layers.Layer):
+class nBRUCell(Layer):
     def __init__(self, units, **kwargs):
         self.units = units
         self.state_size = units
@@ -86,6 +88,7 @@ class nBRUCell(tf.keras.layers.Layer):
         return [tf.zeros(shape=(batch_size, self.units), dtype=dtype)]
 
     def get_config(self):
-        config = super(nBRUCell, self).get_config().copy()
-        config.update({'units': self.units})
-        return config
+        config = {'units': self.units}
+        base_config = super(nBRUCell, self).get_config()
+        del base_config['trainable']
+        return dict(list(base_config.items()) + list(config.items()))

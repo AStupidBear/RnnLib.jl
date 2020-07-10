@@ -3,7 +3,7 @@ mutable struct RnnModel <: BaseEstimator
     config::Dict{Symbol, String}
 end
 
-is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.config["loss"])
+is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.config[:loss])
 
 const rnnpy = joinpath(@__DIR__, "rnn.py")
 
@@ -32,9 +32,6 @@ function predict(m::RnnModel, h5::String)
 end
 
 function fit!(m::RnnModel, x, y, w = nothing; columns = nothing)
-    if m.config["loss"] == "bce" && minimum(y) < 0
-        y = (y .+ 1) ./ 2
-    end
     fit!(m, dump_rnn_data(x, y, w))
 end
 

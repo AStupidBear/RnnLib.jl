@@ -40,6 +40,7 @@ parser.add_argument('--out_dim', type=int, default=0)
 parser.add_argument('--validation_split', type=float, default=0.2)
 parser.add_argument('--patience', type=int, default=1000)
 parser.add_argument('--warmup_epochs', type=int, default=3)
+parser.add_argument('--use_multiprocessing', action='store_true')
 parser.add_argument('--factor', type=float, default=1)
 parser.add_argument('--commission', type=float, default=1e-4)
 parser.add_argument('--pnl_scale', type=float, default=1)
@@ -108,7 +109,7 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      Dropout, Flatten, GlobalAveragePooling1D,
                                      GlobalMaxPooling1D, Lambda, Layer,
                                      MaxPooling1D, SpatialDropout1D,
-                                     TimeDistributed, add, concatenate)
+                                     TimeDistributed, Add, Concatenate)
 from tensorflow.keras.models import load_model
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 from tensorflow.python.client import device_lib
@@ -159,28 +160,24 @@ def ResNet(filters,
            dropout=0.0,
            return_sequences=False,
            use_batch_norm=True):
-    def resnet_module(i, factor):
+    def resnet_module(i, factor, activation=None, dropout=dropout):
         o = Conv1D(filters, factor * kernel_size - 1, padding=padding)(i)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('relu')(o)
+        o = Activation(activation)(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
         return o
 
     def resnet(i):
-        o = resnet_module(i, 3)
-        o = resnet_module(o, 2)
-        o = resnet_module(o, 1)
-        o = Conv1D(filters, kernel_size, padding=padding)(o)
-        if use_batch_norm:
-            o = BatchNormalization()(o)
-        # expand channels for the sum
-        if filters != i.shape[-1]:
-            i = Conv1D(filters, 1, padding=padding)(i)
+        o = resnet_module(i, 3, activation='relu')
+        o = resnet_module(o, 2, activation='relu')
+        o = resnet_module(o, 1, dropout=0.0)
+        if o.shape[-1] != i.shape[-1]:
+            i = Conv1D(o.shape[-1], 1, padding=padding)(i)
         if use_batch_norm:
             i = BatchNormalization()(i)
-        o = add([i, o])
+        o = Add()([i, o])
         o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
@@ -246,14 +243,14 @@ def Rocket(filters,
                 o = Conv1D(1, kernel_size, padding=padding, dilation_rate=dilation, trainable=False,
                            kernel_initializer=RandomNormal(stddev=1), bias_initializer=RandomUniform(-1, 1))(i)
                 outs.append(o)
-        o = concatenate(outs)
+        o = Concatenate()(outs)
         if return_sequences:
             o_max = CausalMaxPooling1D(pool_size)(o)
             o_avg = CausalAveragePooling1D(pool_size)(o)
         else:
             o_max = GlobalMaxPooling1D()(o)
             o_avg = GlobalAveragePooling1D()(o)
-        o = concatenate([o_max, o_avg])
+        o = Concatenate()([o_max, o_avg])
         return o
     return rocket
 
@@ -266,29 +263,33 @@ def Inception(filters,
               return_sequences=False,
               use_batch_norm=True,
               bottleneck_size=32):
-    def inception_module(i):
+    def inception_module(i, activation=None, dropout=dropout):
         kernel_sizes = [kernel_size * (2 ** i) for i in range(3)]
         if bottleneck_size > 0 and int(i.shape[-1]) > 4 * bottleneck_size:
-            i = Conv1D(bottleneck_size, 1, padding=padding, use_bias=False)(i)
-        conv_list = [Conv1D(filters // 4, 1, padding=padding,
-                            use_bias=False)(CausalMaxPooling1D(3)(i))]
+            i = Conv1D(bottleneck_size, 1, padding=padding, use_bias=not use_batch_norm)(i)
+        filters_per_conv = filters // (len(kernel_sizes) + 1)
+        conv_list = [Conv1D(filters_per_conv, 1, padding=padding,
+                        use_bias=not use_batch_norm)(CausalMaxPooling1D(3)(i))]
         for ks in kernel_sizes:
-            o = Conv1D(filters // 4, ks, padding=padding, use_bias=False)(i)
+            o = Conv1D(filters_per_conv, ks, padding=padding, use_bias=not use_batch_norm)(i)
             conv_list.append(o)
-        o = concatenate(conv_list)
+        o = Concatenate()(conv_list)
         if use_batch_norm:
             o = BatchNormalization()(o)
-        o = Activation('relu')(o)
+        o = Activation(activation)(o)
+        if dropout > 0:
+            o = SpatialDropout1D(dropout)(o)
         return o
 
     def inception(i):
-        o = inception_module(i)
-        o = inception_module(o)
-        o = inception_module(o)
-        i = Conv1D(int(o.shape[-1]), 1, padding=padding, use_bias=False)(i)
+        o = inception_module(i, activation='relu')
+        o = inception_module(o, activation='relu')
+        o = inception_module(o, dropout=0.0)
+        if o.shape[-1] != i.shape[-1]:
+            i = Conv1D(o.shape[-1], 1, padding=padding, use_bias=not use_batch_norm)(i)
         if use_batch_norm:
             i = BatchNormalization()(i)
-        o = add([i, o])
+        o = Add()([i, o])
         o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
@@ -305,13 +306,14 @@ def TCN(filters,
         pool_size,
         max_dilation,
         padding='causal',
+        use_skip_conn=False,
         dropout=0.0,
         return_sequences=False,
         use_batch_norm=True):
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n <= max_dilation]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
-                    use_batch_norm=use_batch_norm, activation='relu', return_sequences=True)(i)
+                    use_skip_conn=use_skip_conn, use_batch_norm=use_batch_norm, activation='relu', return_sequences=True)(i)
         if return_sequences:
             o = CausalAveragePooling1D(pool_size)(o)
         else:
@@ -326,14 +328,9 @@ def ResRNN(hidden_size,
            use_skip_conn=False,
            layer='LSTM'):
     def rnn(i):
-        o = eval(layer)(hidden_size, dropout=dropout,
-                        return_sequences=return_sequences)(i)
-        if use_skip_conn:
-            o = eval(layer)(hidden_size, dropout=dropout,
-                            return_sequences=return_sequences)(o)
-            if hidden_size != i.shape[-1]:
-                i = DenseMod(hidden_size)(i)
-            o = add([i, o])
+        o = eval(layer)(hidden_size, dropout=dropout, return_sequences=return_sequences)(i)
+        if use_skip_conn and o.shape[-1] != i.shape[-1]:
+            o = Add()([i, o])
         return o
     return rnn
 
@@ -350,7 +347,7 @@ def AHLN(hidden_size,
             pool_list.append(CausalAveragePooling1D(pool_size)(i))
             pool_list.append(CausalMaxPooling1D(pool_size)(i))
             pool_list.append(CausalMinPooling1D(pool_size)(i))
-        o = concatenate(pool_list)
+        o = Concatenate()(pool_list)
         for n in range(2):
             o = DenseMod(hidden_size)(o)
             if use_batch_norm:
@@ -358,12 +355,12 @@ def AHLN(hidden_size,
             o = Activation('relu')(o)
             if dropout > 0:
                 o = SpatialDropout1D(dropout)(o)
-        if hidden_size != i.shape[-1]:
-            i = DenseMod(hidden_size)(i)
+        if o.shape[-1] != i.shape[-1]:
+            i = DenseMod(o.shape[-1])(i)
         if use_batch_norm:
             i = BatchNormalization()(i)
         if use_skip_conn:
-            o = add([i, o])
+            o = Add()([i, o])
         o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
@@ -409,12 +406,12 @@ def CausalMinPooling1D(pool_size):
     return pool
 
 
-def DenseMod(units):
+def DenseMod(units, activation=None):
     def densemod(i):
         if 'ngraph_bridge' in sys.modules and len(i.shape) == 3:
-            return Conv1D(units, 1, padding='causal', activation='relu')(i)
+            return Conv1D(units, 1, padding='causal', activation=activation)(i)
         else:
-            return Dense(units, activation='relu')(i)
+            return Dense(units, activation=activation)(i)
     return densemod
 
 
@@ -505,10 +502,10 @@ def nan_to_num(x):
         xi = x[i]
         if np.isnan(xi):
             x[i] = 0
-        elif xi < -4:
-            x[i] = -4
-        elif xi > 4:
-            x[i] = 4
+        elif xi < -5:
+            x[i] = -5
+        elif xi > 5:
+            x[i] = 5
     return x
 
 class JLSequence(Sequence):
@@ -524,10 +521,11 @@ class JLSequence(Sequence):
                 fid.create_dataset(label_name, data=y, chunks=(T // 2, 2 * batch_size), **hdf5plugin.Blosc('zstd'))
         with h5py.File(data_path, 'r') as fid:
             self.xshape = fid[feature_name].shape
-            self.yshape = fid[label_name].shape
             self.x = None
             self.y = fid[label_name] if label_name in fid.keys() else None
+            self.yshape = (self.xshape[::-1], 0) if self.y is None else self.y.shape
             self.w = fid[weight_name] if weight_name in fid.keys() else None
+            self.pred = None
         self.data_path = data_path
         if sequence_size == 0:
             sequence_size = self.xshape[0]
@@ -732,7 +730,7 @@ for (l, h) in enumerate(hidden_sizes):
         else:
             o = DenseMod(h, activation='relu')(o)
     elif layer == 'TCN':
-        o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout,
+        o = TCN(h, kernel_size, pool_size, max_dilation, dropout=dropout, use_skip_conn=use_skip_conn,
                 use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'AHLN':
         o = AHLN(h, max_dilation, dropout=dropout, use_batch_norm=use_batch_norm,
@@ -742,9 +740,9 @@ for (l, h) in enumerate(hidden_sizes):
                    use_skip_conn=use_skip_conn, layer=layer)(o)
 o = Activation(out_activation, dtype='float')(DenseMod(gen.out_dim)(o))
 if loss == 'direct':
-    o = concatenate([o, o, o])
+    o = Concatenate()([o, o, o])
 model = Model(inputs=[i], outputs=[o])
-# print(model.summary())
+print(model.summary())
 
 # warm start
 resume_from_epoch = 0
@@ -843,6 +841,6 @@ model.fit(
     steps_per_epoch=len(trn_gen) // world_size,
     validation_steps=len(val_gen) // world_size,
     workers=0 if loss == 'direct' else 4,
-    use_multiprocessing=True
+    use_multiprocessing=args.use_multiprocessing
 )
 base_model.save(model_path)

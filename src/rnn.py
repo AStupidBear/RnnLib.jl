@@ -159,7 +159,7 @@ def ResNet(filters,
            padding='causal',
            dropout=0.0,
            return_sequences=False,
-           use_batch_norm=True):
+           use_batch_norm=False):
     def resnet_module(i, factor, activation=None, dropout=dropout):
         o = Conv1D(filters, factor * kernel_size - 1, padding=padding)(i)
         if use_batch_norm:
@@ -191,7 +191,7 @@ def ResNet(filters,
 
 def MLP(hidden_size,
         dropout=0.0,
-        use_batch_norm=True):
+        use_batch_norm=False):
     def mlp(i):
         o = Dense(hidden_size)(i)
         if use_batch_norm:
@@ -205,7 +205,7 @@ def MLP(hidden_size,
 
 def Conv(filters,
          dropout=0.0,
-         use_batch_norm=True,
+         use_batch_norm=False,
          return_sequences=False):
     def conv(i):
         o = TimeDense(filters)(i)
@@ -253,7 +253,7 @@ def Inception(filters,
               padding='causal',
               dropout=0.0,
               return_sequences=False,
-              use_batch_norm=True,
+              use_batch_norm=False,
               bottleneck_size=32):
     def inception_module(i, activation=None, dropout=dropout):
         kernel_sizes = [kernel_size * (2 ** i) for i in range(3)]
@@ -301,7 +301,7 @@ def TCN(filters,
         use_skip_conn=False,
         dropout=0.0,
         return_sequences=False,
-        use_batch_norm=True):
+        use_batch_norm=False):
     def _tcn(i):
         dilations = [2**n for n in range(10) if 2**n * kernel_size <= recept_field]
         o = tcn.TCN(filters, kernel_size, 1, dilations=dilations, padding=padding, dropout_rate=dropout,
@@ -329,33 +329,37 @@ def ResRNN(hidden_size,
 
 def AHLN(hidden_size,
          recept_field,
+         kernel_size,
+         padding='causal',
          dropout=0.0,
          return_sequences=True,
-         use_batch_norm=True,
+         use_batch_norm=False,
          use_skip_conn=False):
     def ahln(i):
-        pool_list = [i]
-        for pool_size in [4**n for n in range(10) if 4**n <= recept_field]:
-            pool_list.append(CausalAveragePooling1D(pool_size)(i))
-            pool_list.append(CausalMaxPooling1D(pool_size)(i))
-            pool_list.append(CausalMinPooling1D(pool_size)(i))
-        o = Concatenate()(pool_list)
-        for n in range(2):
-            o = TimeDense(hidden_size)(o)
-            if use_batch_norm:
-                o = BatchNormalization()(o)
-            o = Activation('relu')(o)
-            if dropout > 0:
-                o = SpatialDropout1D(dropout)(o)
-        if o.shape[-1] != i.shape[-1]:
-            i = TimeDense(o.shape[-1])(i)
+        o = Conv1D(hidden_size, kernel_size, padding=padding)(i)
         if use_batch_norm:
-            i = BatchNormalization()(i)
+            o = BatchNormalization()(o)
+        o = Activation('relu')(o)
+        if dropout > 0:
+            o = SpatialDropout1D(dropout)(o)
+        o = Conv1D(hidden_size, kernel_size, padding=padding)(o)
+        if use_batch_norm:
+            o = BatchNormalization()(o)
         if use_skip_conn:
+            if o.shape[-1] != i.shape[-1]:
+                i = TimeDense(o.shape[-1])(i)
+            if use_batch_norm:
+                i = BatchNormalization()(i)
             o = Add()([i, o])
         o = Activation('relu')(o)
         if dropout > 0:
             o = SpatialDropout1D(dropout)(o)
+        pool_list = [o]
+        for pool_size in [4**n for n in range(10) if 4**n <= recept_field]:
+            pool_list.append(CausalAveragePooling1D(pool_size)(o))
+            pool_list.append(CausalMaxPooling1D(pool_size)(o))
+            pool_list.append(CausalMinPooling1D(pool_size)(o))
+        o = Concatenate()(pool_list)
         if not return_sequences:
             o = GlobalAveragePooling1D()(o)
         return o
@@ -628,9 +632,6 @@ class JLSequence(Sequence):
 
     def fill_pred(self, pred):
         npred = 0
-        from sklearn.metrics import accuracy_score
-        acc = accuracy_score((pred > 0.5).swapaxes(0, 1).flatten(), self.y[:, :, :].flatten())
-        print('acc..........', acc)
         for idx in range(len(self)):
             idx = idx + self.start
             n, t = idx % self.n_batches, idx // self.n_batches
@@ -741,10 +742,10 @@ for (l, h) in enumerate(hidden_sizes):
         else:
             o = TimeDense(h, activation='relu')(o)
     elif layer == 'TCN':
-        o = TCN(h, kernel_size, recept_field, pool_size, dropout=dropout, use_skip_conn=use_skip_conn,
+        o = TCN(h, recept_field, kernel_size, pool_size, dropout=dropout, use_skip_conn=use_skip_conn,
                 use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
     elif layer == 'AHLN':
-        o = AHLN(h, recept_field, dropout=dropout, use_batch_norm=use_batch_norm,
+        o = AHLN(h, recept_field, kernel_size, dropout=dropout, use_batch_norm=use_batch_norm,
                  use_skip_conn=use_skip_conn, return_sequences=return_sequences)(o)
     else:
         o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,
@@ -842,7 +843,6 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
     print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
-print(len(trn_gen) // world_size)
 model.fit(
     x=trn_gen,
     epochs=epochs,

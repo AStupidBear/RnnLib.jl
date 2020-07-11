@@ -631,6 +631,10 @@ class JLSequence(Sequence):
             return trn_gen, val_gen
 
     def fill_pred(self, pred):
+        if pred.ndim < 3:
+            fid = h5py.File(pred_path, 'w')
+            fid.create_dataset(pred_name, data=pred)
+            return
         npred = 0
         for idx in range(len(self)):
             idx = idx + self.start

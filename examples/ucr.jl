@@ -1,20 +1,7 @@
-using RnnLib
-using MLSuiteBase
-using PyCall
-using PyCallUtils
-using PandasLite
-using HDF5
-using HDF5Utils
-using ProgressMeter
-using Random
-using Statistics
-using Printf
-using Glob
-using Test
-
-ENV["USE_GPU"] = 0
-
-cd(mktempdir())
+using Random, Statistics, Printf, Test
+using Parameters, Glob, ProgressMeter
+using PyCall, HDF5, PyCallUtils, HDF5Utils
+using PandasLite, MLSuiteBase, RnnLib
 
 @from sktime.utils.load_data imports load_from_tsfile_to_dataframe
 @from scipy.interpolate imports interp1d
@@ -58,22 +45,22 @@ function load_dataset(dset)
             x = permutedims(np.stack(X.apply(np.vstack, axis = 1)), (2, 1, 3))
             y = reshape(enc.transform(y), 1, :)
             x = (x .- mean(x, dims = (2, 3))) ./ std(x, dims = (2, 3))
-            h5save(dst, (x = x, y = y))
+            h5save(dst, (x = Float32.(x), y = Float32.(y)))
         end
     end
     d_trn = h5open(readmmap, h5_trn)
     d_tst = h5open(readmmap, h5_tst)
-    d_trn["x"], d_trn["y"], d_tst["x"], d_tst["y"] 
+    d_trn["x"], d_trn["y"], d_tst["x"], d_tst["y"]
 end
 
-UEA_UCR = mkpath(get(ENV, "UEA_UCR_DATA_DIR", expanduser("~/.data/UEA_UCR")))
+UEA_UCR = mkpath(get(ENV, "UEA_UCR_DATA_DIR", expanduser("~/job/UEA_UCR")))
 csv = joinpath(UEA_UCR, "result.csv")
 base_url = "http://www.timeseriesclassification.com/Downloads/Archives"
 for ts in ["Univariate2018_ts.zip", "Multivariate2018_ts.zip"]
-    localfile = joinpath(UEA_UCR, "..", ts)
+    localfile = joinpath(UEA_UCR, ts)
     if !isfile(localfile)
         url = joinpath(base_url, ts)
-        download(url, localfile)
+        run(`wget -c $url -O $localfile`)
     end
     subdir = joinpath(UEA_UCR, ts[1:end-11] * "_ts")
     if !isdir(subdir)
@@ -81,25 +68,34 @@ for ts in ["Univariate2018_ts.zip", "Multivariate2018_ts.zip"]
     end
 end
 
-models = [
-    RnnModel(loss = "spcce", layer = "MLP", hidden_sizes = "500,500,500", dropout = 0.3, use_batch_norm = false),
-    RnnModel(loss = "spcce", layer = "ResNet", hidden_sizes = "64,128,128"),
-    RnnModel(loss = "spcce", layer = "Inception", hidden_sizes = "128,128", kernel_size = 10),
-    RnnModel(loss = "spcce", layer = "TCN", hidden_sizes = "64", max_dilation = 8),
-    RnnModel(loss = "spcce", layer = "Rocket", hidden_sizes = "100", max_dilation = 1024, validation_split = 0)
+grid = [
+    "dset" => ["FreezerRegularTrain"] ∪ basename.(glob("*/*", UEA_UCR)),
+    "lr" => [0, 1e-5],
+    "dropout" => [0.0, 0.2],
+    "layer" => ["MLP", "AHLN", "RestNet", "Inception", "TCN", "Rocket", "GRU", "BRU", "nBRU"],
+    "hidden_sizes" => ["128", "128,128"],
+    "use_batch_norm" => [true, false],
+    "use_skip_conn" => [true, false],
+    "kernel_size" => [3, 5, 7],
+    "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7]
 ]
-for dset in ["FreezerRegularTrain"] ∪ basename.(glob("*/*", UEA_UCR))
-    x_trn, y_trn, x_tst, y_tst = load_dataset(dset)
-    maximum(y_trn) >= 2 && continue
-    for model in models
-        RnnLib.fit!(model, x_trn, y_trn)
-        ŷ_trn = RnnLib.predict(model, x_trn)
-        ŷ_tst = RnnLib.predict(model, x_tst)
-        sr = Series(Dict("dset" => dset, "layer" => model.layer))
-        sr["acc_trn"] = accuracy_score(vec(y_trn), vec(ŷ_trn))
-        sr["acc_tst"] = accuracy_score(vec(y_tst), vec(ŷ_tst))
-        df = isfile(csv) ? pd.read_csv(csv) : DataFrame()
-        df = df.append(sr, ignore_index = true).drop_duplicates()
-        df.to_csv(csv, index = false)
-    end
-end
+@unpack dset, lr, dropout, layer, hidden_sizes, use_batch_norm, use_skip_conn, 
+        kernel_size, recept_field_ratio = param = @grid 10000 gridparams(grid)
+x_trn, y_trn, x_tst, y_tst = load_dataset(dset)
+maximum(y_trn) >= 2 && exit()
+recept_field = ceil(Int, size(x_trn, 3) * recept_field_ratio)
+out_dim = maximum(y_trn) + 1
+model = RnnModel(
+    lr = 1e-3, epochs = 100, hidden_sizes = hidden_sizes, loss = "spcce",
+    kernel_size = kernel_size, recept_field = recept_field,
+    layer = layer, out_dim = out_dim, validation_split = 0
+)
+RnnLib.fit!(model, x_trn, y_trn)
+ŷ_trn = RnnLib.predict(model, x_trn)
+ŷ_tst = RnnLib.predict(model, x_tst)
+sr = Series(param)
+sr["acc_trn"] = accuracy_score(vec(y_trn), vec(ŷ_trn))
+sr["acc_tst"] = accuracy_score(vec(y_tst), vec(ŷ_tst))
+df = isfile(csv) ? pd.read_csv(csv) : DataFrame()
+df = df.append(sr, ignore_index = true).dropna().drop_duplicates()
+df.to_csv(csv, index = false)

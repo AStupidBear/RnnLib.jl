@@ -3,7 +3,7 @@ import tensorflow as tf
 from keras_adamw.optimizers_v2 import SGDW, AdamW
 from tensorflow.keras.layers import Activation
 
-from ind_rnn import IndRNNCell, IndRNN
+from indrnn import IndRNNCell, IndRNN
 from bistable import BRUCell, nBRUCell, BRU, nBRU
 
 def swish(x):

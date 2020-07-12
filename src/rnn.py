@@ -105,7 +105,7 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 from tensorflow.python.client import device_lib
 
-from lr_finder import LRFinder
+from lrfinder import LRFinder
 from custom import *
 
 ###################################################################################################

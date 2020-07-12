@@ -106,7 +106,7 @@ x_trn, y_trn, x_tst, y_tst = generate_samples(dset)
 if dset == "SequentialMNIST"
     loss, out_dim, fscore = "spcce", 10, accuracy_score
 else
-    loss, out_dim = "mse", 0, r2_score
+    loss, out_dim, fscore = "mse", 0, r2_score
 end
 recept_field = ceil(Int, size(x_trn, 3) * something(recept_field_ratio, 0))
 

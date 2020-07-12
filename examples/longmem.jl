@@ -7,17 +7,32 @@ Random.seed!(1234)
 
 @from sklearn.metrics imports accuracy_score, r2_score
 
-function SequentialMNIST(x, y; lag = 300)
-    x = reshape(x, :, size(x, 3))' ./ 255f0
-    x = hcat(x, zeros(Float32, size(x, 1), lag))
-    x = reshape(x, 1, size(x)...)
-    y = reshape(y, 1, :)
-    return  x, y
+function CopyFirstInput(n; seqlen = 300)
+    x = randn(Float32, 1, n, seqlen)
+    return x, x[:, :, 1]
 end
 
-function CopyFirstInput(n; lag = 300)
-    x = randn(Float32, 1, n, lag)
-    y = x[:, :, 1]
+function AddingProblem(n; seqlen = 600)
+    x_num = rand(Float32, 1, n, seqlen)
+    x_mask = zeros(Float32, 1, n, seqlen)
+    y = zeros(Float32, 1, n)
+    for i in 1:n
+        ts = randperm(seqlen)[1:2]
+        x_mask[1, i, ts] .= 1
+        y[1, i] = sum(x_num[1, i, ts])
+    end
+    return vcat(x_num, x_mask), y
+end
+
+function CopyMemory(n; seqlen = 601, memlen = 10)
+    seq = rand(1f0:8f0, (n, memlen))
+    zero = fill(0f0, (n, seqlen))
+    marker = fill(9f0, (n, memlen + 1))
+    zeroy = fill(0f0, (n, memlen + seqlen + 1))
+    x = hcat(seq, zero, marker)
+    y = hcat(zeroy, seq)
+    x = reshape(x, 1, size(x)...)
+    y = reshape(y, 1, size(y)...)
     return x, y
 end
 
@@ -31,10 +46,24 @@ function Denoising(n; seqlen = 400, lag = 300)
     return x, y
 end
 
+function SequentialMNIST(x, y; lag = 300)
+    x = reshape(x, :, size(x, 3))' ./ 255f0
+    x = hcat(x, zeros(Float32, size(x, 1), lag))
+    x = reshape(x, 1, size(x)...)
+    y = reshape(y, 1, :)
+    return  x, y
+end
+
 function generate_samples(name)
     if name == "CopyFirstInput"
-        x_trn, y_trn = CopyFirstInput(45000; lag = 300)
-        x_tst, y_tst = CopyFirstInput(5000; lag = 300)
+        x_trn, y_trn = CopyFirstInput(45000; seqlen = 300)
+        x_tst, y_tst = CopyFirstInput(5000; seqlen = 300)
+    elseif name == "AddingProblem"
+        x_trn, y_trn = AddingProblem(200000; seqlen = 600)
+        x_tst, y_tst = AddingProblem(40000; seqlen = 600)
+    elseif name == "CopyMemory"
+        x_trn, y_trn = CopyMemory(30000; seqlen = 601, memlen = 10)
+        x_tst, y_tst = CopyMemory(6000; seqlen = 601, memlen = 10)
     elseif name == "Denoising"
         x_trn, y_trn = Denoising(45000; seqlen = 400, lag = 200)
         x_tst, y_tst = Denoising(5000; seqlen = 400, lag = 200)
@@ -45,17 +74,22 @@ function generate_samples(name)
     return x_trn, y_trn, x_tst, y_tst
 end
 
-grid = Any[
+grid = [
+    "dset" => ["CopyFirstInput", "AddingProblem", "CopyMemory", "Denoising", "SequentialMNIST"],
+    "hidden_sizes" => ["32,32", "64,64", "128,128"],
+    "batch_size" => [128],
+    "epochs" => [60],
     [
-        # [
-        #     "layer" => ["AHLN", "TCN"],
-        #     "kernel_size" => [3, 5],
-        #     "use_skip_conn" => [true, false],
-        #     "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7],
-        #     "dropout" => [0.0, 0.1],
-        #     "use_batch_norm" => [true, false],
-        #     "lr" => [1e-3, 1e-2],
-        # ],
+        [
+            "layer" => ["AHLN", "TCN"],
+            "hidden_sizes" => ["32,32"],
+            "kernel_size" => [3, 5],
+            "use_skip_conn" => [true, false],
+            "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7],
+            "dropout" => [0.0, 0.1],
+            "use_batch_norm" => [true, false],
+            "lr" => [1e-3, 1e-2],
+        ],
         [
             "layer" => ["ResNet", "Inception"],
             "kernel_size" => [3, 5, 7],
@@ -74,26 +108,6 @@ grid = Any[
             "layer" => ["Rocket"],
             "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7],
             "lr" => [1e-3, 1e-4, 1e-5],
-        ]
-    ],
-    [
-        [
-            "dset" => ["CopyFirstInput"],
-            "hidden_sizes" => ["100,100"],
-            "batch_size" => [100],
-            "epochs" => [60],
-        ],
-        [
-            "dset" => ["Denoising"],
-            "hidden_sizes" => ["100,100,100,100"],
-            "batch_size" => [100],
-            "epochs" => [80],
-        ],
-        [
-            "dset" => ["SequentialMNIST"],
-            "hidden_sizes" => ["300,300"],
-            "batch_size" => [300],
-            "epochs" => [20],
         ]
     ],
 ]

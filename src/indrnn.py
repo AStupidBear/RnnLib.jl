@@ -17,20 +17,6 @@ from tensorflow.python.util import nest
 from tensorflow.python.keras.utils import tf_utils
 
 
-def _generate_dropout_mask(ones, rate, training=None, count=1):
-    def dropped_inputs():
-        return K.dropout(ones, rate)
-    if count > 1:
-        return [K.in_train_phase(
-            dropped_inputs,
-            ones,
-            training=training) for _ in range(count)]
-    return K.in_train_phase(
-        dropped_inputs,
-        ones,
-        training=training)
-
-
 class IndRNNCell(DropoutRNNCellMixin, Layer):
     def __init__(self, units,
                  activation='relu',

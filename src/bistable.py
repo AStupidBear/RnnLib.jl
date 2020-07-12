@@ -44,22 +44,22 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             initializer=tf.keras.initializers.constant(1.0),
             caching_device=default_caching_device)
         self.memory_r = self.add_weight(
-            name="mr",
+            name="memory_r",
             shape=(self.units,),
             initializer=tf.keras.initializers.constant(1.0),
             caching_device=default_caching_device)
-        self.b_r = self.add_weight(
-            name="b_r",
+        self.bias_r = self.add_weight(
+            name="bias_r",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.b_z = self.add_weight(
-            name="b_z",
+        self.bias_z = self.add_weight(
+            name="bias_z",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.b_h = self.add_weight(
-            name="b_h",
+        self.bias_h = self.add_weight(
+            name="bias_h",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
@@ -100,11 +100,11 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             prev_output_h = prev_output
 
         r = K.tanh(self.norm_rx(K.dot(inputs_r, self.kernel_r)) +
-                   self.norm_rh(prev_output_r * self.memory_r) + self.b_r) + 1
+                   self.norm_rh(prev_output_r * self.memory_r) + self.bias_r) + 1
         z = K.sigmoid(self.norm_zx(K.dot(inputs_z, self.kernel_z)) +
-                      self.norm_zh(prev_output_z * self.memory_z) + self.b_z)
+                      self.norm_zh(prev_output_z * self.memory_z) + self.bias_z)
         h = K.tanh(self.norm_hx(K.dot(inputs_h, self.kernel_h)) +
-                   r * prev_output_h + self.b_h)
+                   r * prev_output_h + self.bias_h)
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 
@@ -118,7 +118,9 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             'dropout':
                 self.dropout,
             'recurrent_dropout':
-                self.recurrent_dropout
+                self.recurrent_dropout,
+            'use_batch_norm':
+                self.use_batch_norm
         }
         base_config = super(BRUCell, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -162,22 +164,22 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             initializer='orthogonal',
             caching_device=default_caching_device)
         self.memory_r = self.add_weight(
-            name="mr",
+            name="memory_r",
             shape=(self.units, self.units),
             initializer='orthogonal',
             caching_device=default_caching_device)
-        self.b_r = self.add_weight(
-            name="b_r",
+        self.bias_r = self.add_weight(
+            name="bias_r",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.b_z = self.add_weight(
-            name="b_z",
+        self.bias_z = self.add_weight(
+            name="bias_z",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.b_h = self.add_weight(
-            name="b_h",
+        self.bias_h = self.add_weight(
+            name="bias_h",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
@@ -218,11 +220,11 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             prev_output_h = prev_output
 
         r = K.tanh(self.norm_rx(K.dot(inputs_r, self.kernel_r)) +
-                   self.norm_rh(K.dot(prev_output_r, self.memory_r)) + self.b_r) + 1
+                   self.norm_rh(K.dot(prev_output_r, self.memory_r)) + self.bias_r) + 1
         z = K.sigmoid(self.norm_zx(K.dot(inputs_z, self.kernel_z)) +
-                      self.norm_zh(K.dot(prev_output_z, self.memory_z)) + self.b_z)
+                      self.norm_zh(K.dot(prev_output_z, self.memory_z)) + self.bias_z)
         h = K.tanh(self.norm_hx(K.dot(inputs_h, self.kernel_h)) +
-                   r * prev_output_h + self.b_h)
+                   r * prev_output_h + self.bias_h)
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 
@@ -236,11 +238,12 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             'dropout':
                 self.dropout,
             'recurrent_dropout':
-                self.recurrent_dropout
+                self.recurrent_dropout,
+            'use_batch_norm':
+                self.use_batch_norm
         }
-        base_config = super(nBRUCell, self).get_config()
+        base_config = super(BRUCell, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
-
 
 def BRU(hidden_size,
         return_sequences=False,

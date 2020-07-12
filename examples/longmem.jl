@@ -1,7 +1,7 @@
 using Random, Statistics, Test
 using Parameters, DataStructures
 using PyCall, PyCallUtils, PandasLite
-using MLSuiteBase, RnnLib
+using MLDatasets, MLSuiteBase, RnnLib
 
 Random.seed!(1234)
 
@@ -112,7 +112,7 @@ recept_field = ceil(Int, size(x_trn, 3) * something(recept_field_ratio, 0))
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 
-    out_dim = out_dim, loss = loss, lr = lr, epochs = epochs, patience = 3, validation_split = 0.1,
+    out_dim = out_dim, loss = loss, lr = lr, epochs = epochs, patience = 3,
 )
 RnnLib.fit!(model, x_trn, y_trn)
 ŷ_trn = RnnLib.predict(model, x_trn)

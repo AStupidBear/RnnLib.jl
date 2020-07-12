@@ -34,7 +34,7 @@ parser.add_argument('--prefetch', action='store_true')
 parser.add_argument('--sequence_size', type=int, default=0)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--validation_split', type=float, default=0.1)
+parser.add_argument('--validation_split', type=float, default=0.0)
 parser.add_argument('--use_multiprocessing', action='store_true')
 
 parser.add_argument('--model_path', type=str, default='model.h5')
@@ -48,6 +48,9 @@ parser.add_argument('--feature_name', default='x')
 parser.add_argument('--label_name', default='y')
 parser.add_argument('--weight_name', default='w')
 parser.add_argument('--pred_name', default='p')
+
+parser.add_argument('--debug', action='store_true')
+parser.add_argument('--eager', action='store_true')
 
 parser.add_argument('--factor', type=float, default=1)
 parser.add_argument('--commission', type=float, default=1e-4)
@@ -111,7 +114,7 @@ from custom import *
 ###################################################################################################
 # configuration
 
-if os.getenv('TF_EAGER', '0') == '0':
+if not args.eager and not args.debug:
     tf.compat.v1.disable_eager_execution()
 tf.config.threading.set_inter_op_parallelism_threads(1)
 tf.config.threading.set_intra_op_parallelism_threads(1)
@@ -822,7 +825,8 @@ lossf = eval(loss) if loss in ('pnl', 'direct') else loss
 model.compile(loss=lossf, optimizer=opt, metrics=metric,
               sample_weight_mode=sample_weight_mode,
               experimental_run_tf_function=False)
-# model.run_eagerly = True
+if args.debug:
+    model.run_eagerly = True
 
 ###################################################################################################
 # model building
@@ -851,3 +855,15 @@ model.fit(
     use_multiprocessing=args.use_multiprocessing
 )
 base_model.save(args.model_path)
+
+# import ipdb; ipdb.set_trace()
+# model2 = load_model(args.model_path, compile=False)
+# model3 = load_model(args.model_path, compile=False)
+# for (a, b) in zip(model2.get_weights(), model.get_weights()):
+#     print((a - b).sum())
+# pred = model.predict(gen)
+# pred2 = model2.predict(gen)
+# pred3 = model3.predict(gen)
+# (pred - pred2).sum()
+# model.layers[1].cell.kernel - model2.layers[1].cell.kernel
+# print(np.mean(np.abs(gen.y[:, :, :].swapaxes(0, 1) - pred)**2))

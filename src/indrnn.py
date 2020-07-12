@@ -34,8 +34,10 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
         self.use_bias = use_bias
 
         self.kernel_initializer = initializers.get(kernel_initializer)
-        self.recurrent_initializer = initializers.get(recurrent_initializer) \
-            if recurrent_initializer is not None else None
+        if recurrent_initializer is None:
+            self.recurrent_initializer = initializers.RandomUniform(-1.0, 1.0)
+        else:
+            self.recurrent_initializer = initializers.get(recurrent_initializer)
         self.bias_initializer = initializers.get(bias_initializer)
 
         self.kernel_regularizer = regularizers.get(kernel_regularizer)
@@ -62,8 +64,6 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
             regularizer=self.kernel_regularizer,
             constraint=self.kernel_constraint,
             caching_device=default_caching_device)
-        if self.recurrent_initializer is None:
-            self.recurrent_initializer = initializers.RandomUniform(-1.0, 1.0)
         self.recurrent_kernel = self.add_weight(
             shape=(self.units,),
             name='recurrent_kernel',
@@ -71,7 +71,6 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
             regularizer=self.recurrent_regularizer,
             constraint=self.recurrent_constraint,
             caching_device=default_caching_device)
-        self.recurrent_kernel = K.clip(self.recurrent_kernel, -1, 1)
         if self.use_bias:
             self.bias = self.add_weight(
                 shape=(self.units,),

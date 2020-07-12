@@ -47,15 +47,15 @@ end
 
 grid = Any[
     [
-        [
-            "layer" => ["AHLN", "TCN"],
-            "kernel_size" => [3, 5],
-            "use_skip_conn" => [true, false],
-            "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7],
-            "dropout" => [0.0, 0.1],
-            "use_batch_norm" => [true, false],
-            "lr" => [1e-3, 1e-2],
-        ],
+        # [
+        #     "layer" => ["AHLN", "TCN"],
+        #     "kernel_size" => [3, 5],
+        #     "use_skip_conn" => [true, false],
+        #     "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7],
+        #     "dropout" => [0.0, 0.1],
+        #     "use_batch_norm" => [true, false],
+        #     "lr" => [1e-3, 1e-2],
+        # ],
         [
             "layer" => ["ResNet", "Inception"],
             "kernel_size" => [3, 5, 7],

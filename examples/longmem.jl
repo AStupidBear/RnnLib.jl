@@ -107,7 +107,7 @@ if dset == "SequentialMNIST"
 else
     loss, out_dim = "mse", 0, r2_score
 end
-recept_field = ceil(Int, size(x_trn, 3) * recept_field_ratio)
+recept_field = ceil(Int, size(x_trn, 3) * something(recept_field_ratio, 0))
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 

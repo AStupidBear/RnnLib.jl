@@ -90,12 +90,11 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             prev_output_r = prev_output
             prev_output_h = prev_output
 
-        r = tf.nn.tanh(tf.matmul(inputs_r, self.kernelr) +
-                       prev_output_r * self.memoryr + self.br) + 1
-        z = tf.nn.sigmoid(tf.matmul(inputs_z, self.kernelz) +
-                          prev_output_z * self.memoryz + self.bz)
-        h = tf.nn.tanh(tf.matmul(inputs_h, self.kernelh) +
-                       r * prev_output_h + self.bh)
+        r = K.tanh(K.dot(inputs_r, self.kernelr) +
+                   prev_output_r * self.memoryr + self.br) + 1
+        z = K.sigmoid(K.dot(inputs_z, self.kernelz) +
+                      prev_output_z * self.memoryz + self.bz)
+        h = K.tanh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh)
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 
@@ -196,12 +195,11 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             prev_output_r = prev_output
             prev_output_h = prev_output
 
-        r = tf.nn.tanh(tf.matmul(inputs_r, self.kernelr) +
-                       tf.matmul(prev_output_r, self.memoryr + self.br)) + 1
-        z = tf.nn.sigmoid(tf.matmul(inputs_z, self.kernelz) +
-                          tf.matmul(prev_output_z, self.memoryz) + self.bz)
-        h = tf.nn.tanh(tf.matmul(inputs_h, self.kernelh) +
-                       r * prev_output_h + self.bh)
+        r = K.tanh(K.dot(inputs_r, self.kernelr) +
+                   K.dot(prev_output_r, self.memoryr + self.br)) + 1
+        z = K.sigmoid(K.dot(inputs_z, self.kernelz) +
+                      K.dot(prev_output_z, self.memoryz) + self.bz)
+        h = K.tanh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh)
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 

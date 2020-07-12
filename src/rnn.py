@@ -5,73 +5,64 @@
 if True:
     import argparse
 parser = argparse.ArgumentParser(description='rnnlib')
-parser.add_argument('--model_path', type=str, default='model.h5')
-parser.add_argument('--data_path', type=str, default='train.rnn')
-parser.add_argument('--pred_path', type=str, default='pred.rnn')
-parser.add_argument('--ckpt_fmt', default='ckpt-{epoch}.h5')
-parser.add_argument('--log_dir', default='logs')
-parser.add_argument('--feature_name', default='x')
-parser.add_argument('--label_name', default='y')
-parser.add_argument('--weight_name', default='w')
-parser.add_argument('--pred_name', default='p')
-parser.add_argument('--warm_start', action='store_true')
-parser.add_argument('--reset_epoch', action='store_true')
-parser.add_argument('--test', action='store_true')
-parser.add_argument('--prefetch', action='store_true')
-parser.add_argument('--optimizer', type=str, default='AdamW')
-parser.add_argument('--lr', type=float, default=1e-3)
-parser.add_argument('--sequence_size', type=int, default=0)
-parser.add_argument('--batch_size', type=int, default=32)
-parser.add_argument('--epochs', type=int, default=10)
+
 parser.add_argument('--layer', type=str, default='AHLN')
-parser.add_argument('--out_activation', type=str, default='linear')
 parser.add_argument('--hidden_sizes', type=str, default='128')
-parser.add_argument('--loss', type=str, default='mse')
 parser.add_argument('--kernel_size', type=int, default=3)
 parser.add_argument('--kernel_sizes', type=str, default='7,9,11')
 parser.add_argument('--recept_field', type=int, default=64)
 parser.add_argument('--pool_size', type=int, default=1)
+parser.add_argument('--bottleneck_size', type=int, default=32)
+parser.add_argument('--use_skip_conn', action='store_true')
+parser.add_argument('--out_dim', type=int, default=0)
+parser.add_argument('--out_activation', type=str, default='linear')
+
 parser.add_argument('--l2', type=float, default=0)
 parser.add_argument('--dropout', type=float, default=0)
 parser.add_argument('--use_batch_norm', action='store_true')
-parser.add_argument('--use_skip_conn', action='store_true')
-parser.add_argument('--bottleneck_size', type=int, default=32)
-parser.add_argument('--out_dim', type=int, default=0)
-parser.add_argument('--validation_split', type=float, default=0.2)
+
+parser.add_argument('--loss', type=str, default='mse') 
+parser.add_argument('--optimizer', type=str, default='AdamW')
+parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--patience', type=int, default=1000)
 parser.add_argument('--warmup_epochs', type=int, default=3)
+
+parser.add_argument('--warm_start', action='store_true')
+parser.add_argument('--reset_epoch', action='store_true')
+parser.add_argument('--test', action='store_true')
+parser.add_argument('--prefetch', action='store_true')
+parser.add_argument('--sequence_size', type=int, default=0)
+parser.add_argument('--batch_size', type=int, default=32)
+parser.add_argument('--epochs', type=int, default=1)
+parser.add_argument('--validation_split', type=float, default=0.1)
 parser.add_argument('--use_multiprocessing', action='store_true')
+
+parser.add_argument('--model_path', type=str, default='model.h5')
+parser.add_argument('--data_path', type=str, default='train.rnn')
+parser.add_argument('--pred_path', type=str, default='pred.rnn')
+
+parser.add_argument('--ckpt_fmt', default='ckpt-{epoch}.h5')
+parser.add_argument('--log_dir', default='logs')
+
+parser.add_argument('--feature_name', default='x')
+parser.add_argument('--label_name', default='y')
+parser.add_argument('--weight_name', default='w')
+parser.add_argument('--pred_name', default='p')
+
 parser.add_argument('--factor', type=float, default=1)
 parser.add_argument('--commission', type=float, default=1e-4)
 parser.add_argument('--pnl_scale', type=float, default=1)
 parser.add_argument('--close_thresh', type=float, default=0.5)
 parser.add_argument('--eta', type=float, default=0.1)
-args = parser.parse_args()
-model_path, data_path, pred_path, ckpt_fmt, log_dir = args.model_path, args.data_path, args.pred_path, args.ckpt_fmt, args.log_dir
-feature_name, label_name, weight_name, pred_name = args.feature_name, args.label_name, args.weight_name, args.pred_name
-warm_start, reset_epoch, test, prefetch = args.warm_start, args.reset_epoch, args.test, args.prefetch
-lr, optimizer, batch_size, sequence_size, epochs = args.lr, args.optimizer, args.batch_size, args.sequence_size, args.epochs
-layer, out_activation, loss, kernel_size = args.layer, args.out_activation, args.loss, args.kernel_size
-recept_field, pool_size, dropout, l2 = args.recept_field, args.pool_size, args.dropout, args.l2
-use_batch_norm, use_skip_conn, bottleneck_size = args.use_batch_norm, args.use_skip_conn, args.bottleneck_size
-out_dim, validation_split, patience, warmup_epochs = args.out_dim, args.validation_split, args.patience, args.warmup_epochs
-factor, commission, pnl_scale, close_thresh, eta = args.factor, args.commission, args.pnl_scale, args.close_thresh, args.eta
-hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
-kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
 
-loss = 'binary_crossentropy' if loss == 'bce' else loss
-loss = 'categorical_crossentropy' if loss == 'cce' else loss
-loss = 'sparse_categorical_crossentropy' if loss == 'spcce' else loss
-out_activation = 'sigmoid' if loss == 'binary_crossentropy' else out_activation
-out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activation
-out_activation = 'tanh' if loss == 'pnl' else out_activation
+args = parser.parse_args()
 
 ###################################################################################################
 # envs setting
 
 if True:
     import os
-if layer in ('LSTM', 'GRU'):
+if args.layer in ('LSTM', 'GRU'):
     os.environ['TF_DISABLE_MKL'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
@@ -432,7 +423,7 @@ def TimeDense(units, activation=None):
 ###################################################################################################
 # custom loss functions
 
-def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
+def pnl(y_true, y_pred, c=args.commission, λ=args.pnl_scale):
     r, p, c = λ * y_true, y_pred, λ * c
     l = - K.mean(r * p)
     if len(y_pred.get_shape()) < 3:
@@ -448,7 +439,7 @@ def pnl(y_true, y_pred, c=commission, λ=pnl_scale):
 
 
 @jit(nopython=True)
-def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=eta, η=close_thresh):
+def loss_augmented_inference(r, z, λ=args.pnl_scale, c=args.commission, ϵ=args.eta, η=args.close_thresh):
     N, T = r.shape[0], r.shape[1]
     Q = np.zeros((N, T, 3, 5), np.float32)
     π = np.zeros((N, T, 1), np.int8)
@@ -479,7 +470,7 @@ def loss_augmented_inference(r, z, λ=pnl_scale, c=commission, ϵ=eta, η=close_
     return π
 
 
-def direct(y_true, y_pred, η=close_thresh):
+def direct(y_true, y_pred, η=args.close_thresh):
     def score(z, y):
         a = K.sign(y - 2)
         b = K.abs(y - 2) / 2
@@ -491,7 +482,7 @@ def direct(y_true, y_pred, η=close_thresh):
 
 
 @jit(nopython=True)
-def direct_loss(r, z, λ=pnl_scale, c=commission, η=close_thresh):
+def direct_loss(r, z, λ=args.pnl_scale, c=args.commission, η=args.close_thresh):
     N, T = r.shape[0], r.shape[1]
     M = np.array([[-1, -1, -1, 0, 1], [-1, 0, 0, 0, 1],
                   [-1, 0, 1, 1, 1]], np.int8)
@@ -524,7 +515,7 @@ def nan_to_num(x):
 
 class JLSequence(Sequence):
 
-    def __init__(self, data_path, sequence_size, batch_size, logger, prefetch):
+    def __init__(self, logger, data_path, pred_path, sequence_size, batch_size, prefetch, feature_name, label_name, weight_name, pred_name, loss, **kwargs):
         self.sess = tf.compat.v1.keras.backend.get_session()
         if not os.path.isfile(data_path):
             F, N, T = 30, 3000, 4802
@@ -540,26 +531,32 @@ class JLSequence(Sequence):
             self.yshape = (self.xshape[::-1], 0) if self.y is None else self.y.shape
             self.w = fid[weight_name] if weight_name in fid.keys() else None
             self.pred = None
+        self.logger = logger
         self.data_path = data_path
+        self.pred_path = pred_path
         if sequence_size == 0:
             sequence_size = self.xshape[0]
         self.sequence_size = sequence_size
         self.batch_size = batch_size
+        self.prefetch = prefetch
+        self.feature_name = feature_name
+        self.label_name = label_name
+        self.weight_name = weight_name
+        self.pred_name = pred_name
+        self.loss = loss
         self.n_sequences = math.floor(self.xshape[0] / self.sequence_size)
         self.n_batches = math.ceil(self.xshape[1] / batch_size)
         self.start = 0
         self.end = self.n_sequences * self.n_batches
-        self.logger = logger
-        self.prefetch = prefetch
         self.out_seq = self.yshape[0] == self.xshape[0]
         print('JLSequence shape: (', self.n_batches, 'x', self.batch_size, ',', self.n_sequences, 'x', self.sequence_size, ')')
-        if out_dim < 1:
+        if args.out_dim < 1:
             if self.out_seq:
                 self.out_dim = self.yshape[-1] if len(self.yshape) == 3 else 1
             else:
                 self.out_dim = self.yshape[-1] if len(self.yshape) == 2 else 1
         else:
-            self.out_dim = out_dim
+            self.out_dim = args.out_dim
 
     def __len__(self):
         return self.end - self.start
@@ -572,15 +569,13 @@ class JLSequence(Sequence):
         ns = slice(ns.start, min(ns.stop, self.xshape[1]))
         if self.x is None:
             fid = h5py.File(self.data_path, 'r', rdcc_nbytes=1024**3, rdcc_nslots=100000)
-            self.x = fid[feature_name]
-            self.y = fid[label_name] if label_name in fid.keys() else None
-            self.w = fid[weight_name] if weight_name in fid.keys() else None
-            if prefetch:
+            self.x = fid[self.feature_name]
+            self.y = fid[self.label_name] if self.label_name in fid.keys() else None
+            self.w = fid[self.weight_name] if self.weight_name in fid.keys() else None
+            if self.prefetch:
                 self.x = self.x[()]
                 self.y = self.y[()] if self.y else None
                 self.w = self.w[()] if self.w else None
-        import time
-        ti  = time.time()
         x = self.x[ts, ns, :].swapaxes(0, 1)
         if x.dtype == 'uint8':
             x = x / 128 - 1
@@ -602,11 +597,11 @@ class JLSequence(Sequence):
                 w = self.w[ns]
         else:
             w = None
-        if w is not None and loss in  ('pnl', 'direct'):
+        if w is not None and self.loss in  ('pnl', 'direct'):
             w = w.reshape(*w.shape, 1)
             y = np.multiply(y, w)
             w = None
-        if loss == 'direct' and y is not None:
+        if self.loss == 'direct' and y is not None:
             if tf.executing_eagerly():
                 z = model(x).numpy()
             else:
@@ -632,8 +627,8 @@ class JLSequence(Sequence):
 
     def fill_pred(self, pred):
         if pred.ndim < 3:
-            fid = h5py.File(pred_path, 'w')
-            fid.create_dataset(pred_name, data=pred)
+            fid = h5py.File(self.pred_path, 'w')
+            fid.create_dataset(self.pred_name, data=pred)
             return
         npred = 0
         for idx in range(len(self)):
@@ -645,9 +640,9 @@ class JLSequence(Sequence):
             y = pred[npred:(npred + len(ns)), :, :]
             shape = (*self.xshape[:2], y.shape[-1])
             if self.pred is None:
-                self.fid_pred = h5py.File(pred_path, 'w')
-                self.fid_pred.create_dataset(pred_name, shape, dtype='float32')
-                self.pred = self.fid_pred[pred_name]
+                self.fid_pred = h5py.File(self.pred_path, 'w')
+                self.fid_pred.create_dataset(self.pred_name, shape, dtype='float32')
+                self.pred = self.fid_pred[self.pred_name]
             self.pred[ts, ns, :] = y.swapaxes(0, 1)
             self.fid_pred.flush()
             npred += len(ns)
@@ -688,7 +683,7 @@ except:
 
 # set gpu specific options
 gpus = tf.config.list_physical_devices('GPU')
-if not test and usegpu and gpus:
+if not args.test and usegpu and gpus:
     tf.config.experimental.set_visible_devices(
         gpus[local_rank % len(gpus)], 'GPU')
     for gpu in gpus:
@@ -701,59 +696,70 @@ elif os.getenv('USE_NGRAPH', '0') == '1':
 
 # load hdf5 data or generate dummy data
 logger = CustomProgbarLogger()
-gen = JLSequence(data_path, sequence_size, batch_size, logger, prefetch)
-trn_gen, val_gen = gen.split(validation_split)
+gen = JLSequence(logger, **vars(args))
+trn_gen, val_gen = gen.split(args.validation_split)
 
 ###################################################################################################
 # model testing
 
-if test:
-    model = load_model(model_path, compile=False)
+if args.test:
+    model = load_model(args.model_path, compile=False)
     gen.fill_pred(model.predict(gen))
     exit()
 
 ###################################################################################################
 # model building
 
+hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
+loss, out_activation = args.loss, args.out_activation
+loss = 'binary_crossentropy' if loss == 'bce' else loss
+loss = 'categorical_crossentropy' if loss == 'cce' else loss
+loss = 'sparse_categorical_crossentropy' if loss == 'spcce' else loss
+out_activation = 'sigmoid' if loss == 'binary_crossentropy' else args.out_activation
+out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activation
+out_activation = 'tanh' if loss == 'pnl' else out_activation
+
 # expected input batch shape: (N, T, F)
 T, N, F = gen.xshape
-pool_size = min(T // 3, pool_size)
-if layer == 'MLP':
+args.pool_size = min(T // 3, args.pool_size)
+
+if args.layer == 'MLP':
     o = i = Input(shape=(T, F))
     o = Flatten()(o)
-elif layer in ('IndRNN', 'PLSTM'):
+elif args.layer in ('IndRNN', 'PLSTM'):
     o = i = Input(shape=(T, F))
 elif os.getenv('USE_TFLITE', '0') == '1':
-    o = i = Input(shape=(T, F), batch_size=batch_size)
+    o = i = Input(shape=(T, F), batch_size=args.batch_size)
 else:
     o = i = Input(shape=(None, F))
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or gen.out_seq
-    if layer == 'MLP':
-        o = MLP(h, dropout=dropout, use_batch_norm=use_batch_norm)(o)
-    elif layer == 'Conv':
-        o = Conv(h, dropout=dropout, use_batch_norm=use_batch_norm,
+    if args.layer == 'MLP':
+        o = MLP(h, dropout=args.dropout, use_batch_norm=args.use_batch_norm)(o)
+    elif args.layer == 'Conv':
+        o = Conv(h, dropout=args.dropout, use_batch_norm=args.use_batch_norm,
                  return_sequences=return_sequences)(o)
-    elif layer == 'ResNet':
-        o = ResNet(h, kernel_size, pool_size, dropout=dropout,
-                   use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
-    elif layer == 'Inception':
-        o = Inception(h, kernel_size, pool_size, dropout=dropout, use_batch_norm=use_batch_norm,
-                      return_sequences=return_sequences, bottleneck_size=bottleneck_size)(o)
-    elif layer == 'Rocket':
+    elif args.layer == 'ResNet':
+        o = ResNet(h, args.kernel_size, args.pool_size, dropout=args.dropout,
+                   use_batch_norm=args.use_batch_norm, return_sequences=return_sequences)(o)
+    elif args.layer == 'Inception':
+        o = Inception(h, args.kernel_size, args.pool_size, dropout=args.dropout, use_batch_norm=args.use_batch_norm,
+                      return_sequences=return_sequences, bottleneck_size=args.bottleneck_size)(o)
+    elif args.layer == 'Rocket':
         if l == 0:
-            o = Rocket(h, recept_field, pool_size, kernel_sizes, return_sequences=return_sequences)(o)
+            kernel_sizes = list(map(int, args.kernel_sizes.split(',')))
+            o = Rocket(h, args.recept_field, args.pool_size, kernel_sizes, return_sequences=return_sequences)(o)
         else:
             o = TimeDense(h, activation='relu')(o)
-    elif layer == 'TCN':
-        o = TCN(h, recept_field, kernel_size, pool_size, dropout=dropout, use_skip_conn=use_skip_conn,
-                use_batch_norm=use_batch_norm, return_sequences=return_sequences)(o)
-    elif layer == 'AHLN':
-        o = AHLN(h, recept_field, kernel_size, dropout=dropout, use_batch_norm=use_batch_norm,
-                 use_skip_conn=use_skip_conn, return_sequences=return_sequences)(o)
+    elif args.layer == 'TCN':
+        o = TCN(h, args.recept_field, args.kernel_size, args.pool_size, dropout=args.dropout, use_skip_conn=args.use_skip_conn,
+                use_batch_norm=args.use_batch_norm, return_sequences=return_sequences)(o)
+    elif args.layer == 'AHLN':
+        o = AHLN(h, args.recept_field, args.kernel_size, dropout=args.dropout, use_batch_norm=args.use_batch_norm,
+                 use_skip_conn=args.use_skip_conn, return_sequences=return_sequences)(o)
     else:
-        o = ResRNN(h, dropout=dropout, return_sequences=return_sequences,
-                   use_skip_conn=use_skip_conn, layer=layer)(o)
+        o = ResRNN(h, dropout=args.dropout, return_sequences=args.return_sequences,
+                   use_skip_conn=args.use_skip_conn, layer=args.layer)(o)
 o = Activation(out_activation, dtype='float')(TimeDense(gen.out_dim)(o))
 if loss == 'direct':
     o = Concatenate()([o, o, o])
@@ -762,9 +768,9 @@ print(model.summary())
 
 # warm start
 resume_from_epoch = 0
-if warm_start:
-    for try_epoch in range(epochs, 0, -1):
-        h5 = log_dir + '/' + ckpt_fmt.format(epoch=try_epoch)
+if args.warm_start:
+    for try_epoch in range(args.epochs, 0, -1):
+        h5 = args.log_dir + '/' + args.ckpt_fmt.format(epoch=try_epoch)
         if os.path.isfile(h5):
             resume_from_epoch = try_epoch
             model = load_model(h5, compile=False)
@@ -772,8 +778,8 @@ if warm_start:
             break
 else:
     import shutil
-    shutil.rmtree(log_dir, ignore_errors=True)
-if reset_epoch:
+    shutil.rmtree(args.log_dir, ignore_errors=True)
+if args.reset_epoch:
     resume_from_epoch = 0
 
 # multi-gpu
@@ -788,29 +794,29 @@ if use_horovod:
     callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
     callbacks.append(hvd.callbacks.MetricAverageCallback())
     callbacks.append(hvd.callbacks.LearningRateWarmupCallback(
-        warmup_epochs, verbose=1))
+        args.warmup_epochs, verbose=1))
 if loss == 'direct':
     callbacks.append(logger)
 if local_rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
-    callbacks.append(AltModelCheckpoint(log_dir + '/' + ckpt_fmt, base_model))
-    callbacks.append(TensorBoard(log_dir))
-    if validation_split > 0:
-        callbacks.append(EarlyStopping(patience=patience, verbose=1))
-    if factor < 1:
+    callbacks.append(AltModelCheckpoint(args.log_dir + '/' + args.ckpt_fmt, base_model))
+    callbacks.append(TensorBoard(args.log_dir))
+    if args.validation_split > 0:
+        callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
+    if args.factor < 1:
         callbacks.append(ReduceLROnPlateau(
-            'loss', factor, patience, min_lr=1e-6, varbose=1))
+            'loss', args.factor, args.patience, min_lr=1e-6, varbose=1))
 
 # optimizer
-weight_decays = {l: l2 for l in get_weight_decays(model)}
+weight_decays = {l: args.l2 for l in get_weight_decays(model)}
 if base_model.optimizer is None:
     # Horovod: adjust learning rate based on number of GPUs.
-    if optimizer == 'SGDW':
-        opt = SGDW(10 * lr * world_size, momentum = 0.9, nesterov=True, weight_decays=weight_decays)
-    elif optimizer == 'AdamW':
-        opt = AdamW(lr * world_size, weight_decays=weight_decays)
+    if args.optimizer == 'SGDW':
+        opt = SGDW(10 * args.lr * world_size, momentum = 0.9, nesterov=True, weight_decays=weight_decays)
+    elif args.optimizer == 'AdamW':
+        opt = AdamW(args.lr * world_size, weight_decays=weight_decays)
     else:
-        opt = eval(optimizer)(lr * world_size)
+        opt = eval(args.optimizer)(args.lr * world_size)
     if not use_mixed_precision():
         opt.clipnorm = 1
 else:
@@ -838,9 +844,9 @@ model.compile(loss=lossf, optimizer=opt, metrics=metric,
 # model building
 
 # lr finder
-if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
+if args.lr == 0:
     lr_finder = LRFinder(model)
-    epochs_ = max(1, 100 * batch_size // N)
+    epochs_ = max(1, 100 * args.batch_size // N)
     lr_finder.find_generator(gen, 1e-6, 1e-2, epochs_)
     best_lr = min(1e-3, lr_finder.get_best_lr(5))
     K.set_value(model.optimizer.lr, best_lr)
@@ -849,7 +855,7 @@ if lr == 0 or layer == 'Rocket' and lr >= 1e-3:
 # train model
 model.fit(
     x=trn_gen,
-    epochs=epochs,
+    epochs=args.epochs,
     verbose=1 if local_rank == 0 else 0,
     callbacks=callbacks,
     validation_data=val_gen if len(val_gen) > 1 else None,
@@ -860,4 +866,4 @@ model.fit(
     workers=0 if loss == 'direct' else 4,
     use_multiprocessing=args.use_multiprocessing
 )
-base_model.save(model_path)
+base_model.save(args.model_path)

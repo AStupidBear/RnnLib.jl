@@ -1,13 +1,11 @@
-using RnnLib
-using MLSuiteBase
-using Random
-using Statistics
-using Test
+using Random, Statistics, Test
+using MLSuiteBase, RnnLib
 
 cd(mktempdir())
 
-F, N, T = 3, 32, 100
 Random.seed!(1234)
+
+F, N, T = 3, 32, 100
 x = randn(Float32, F, N, T)
 y = mean(x, dims = 1) * sqrt(1f0 * F)
 w = ones(Float32, N, T)

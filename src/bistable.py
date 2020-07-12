@@ -1,10 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import backend as K
-from tensorflow.keras.layers import Layer
-from tensorflow.keras.layers import RNN, GRUCell
-from tensorflow.python.keras.layers.recurrent import DropoutRNNCellMixin
-from tensorflow.python.keras.layers.recurrent import _caching_device
-from tensorflow.python.keras.layers.recurrent import _generate_zero_filled_state_for_cell
+from tensorflow.keras.layers import Layer, RNN, GRUCell, LayerNormalization
+from tensorflow.python.keras.layers.recurrent import DropoutRNNCellMixin, _caching_device, _generate_zero_filled_state_for_cell
 from tensorflow.python.util import nest
 from tensorflow.python.keras.utils import tf_utils
 
@@ -13,10 +10,12 @@ class BRUCell(DropoutRNNCellMixin, Layer):
     def __init__(self, units,
                  dropout=0.,
                  recurrent_dropout=0.,
+                 use_batch_norm=False,
                  **kwargs):
         self.units = units
         self.dropout = min(1., max(0., dropout))
         self.recurrent_dropout = min(1., max(0., recurrent_dropout))
+        self.use_batch_norm = use_batch_norm
         self.state_size = self.units
         self.output_size = self.units
         super(BRUCell, self).__init__(**kwargs)
@@ -64,6 +63,12 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
+        if self.use_batch_norm:
+            self.normr = LayerNormalization()
+            self.normz = LayerNormalization()
+            self.normh = LayerNormalization()
+        else:
+            self.normr = self.normz = self.normh = lambda x: x
         super(BRUCell, self).build(input_shape)
 
     def call(self, inputs, states, training=None):
@@ -90,11 +95,9 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             prev_output_r = prev_output
             prev_output_h = prev_output
 
-        r = K.tanh(K.dot(inputs_r, self.kernelr) +
-                   prev_output_r * self.memoryr + self.br) + 1
-        z = K.sigmoid(K.dot(inputs_z, self.kernelz) +
-                      prev_output_z * self.memoryz + self.bz)
-        h = K.tanh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh)
+        r = K.tanh(self.normr(K.dot(inputs_r, self.kernelr) + prev_output_r * self.memoryr + self.br)) + 1
+        z = K.sigmoid(self.normz(K.dot(inputs_z, self.kernelz) + prev_output_z * self.memoryz + self.bz))
+        h = K.tanh(self.normh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh))
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 
@@ -118,10 +121,12 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
     def __init__(self, units,
                  dropout=0.,
                  recurrent_dropout=0.,
+                 use_batch_norm=False,
                  **kwargs):
         self.units = units
         self.dropout = min(1., max(0., dropout))
         self.recurrent_dropout = min(1., max(0., recurrent_dropout))
+        self.use_batch_norm = use_batch_norm
         self.state_size = units
         self.output_size = self.units
         super(nBRUCell, self).__init__(**kwargs)
@@ -169,6 +174,12 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
+        if self.use_batch_norm:
+            self.normr = LayerNormalization()
+            self.normz = LayerNormalization()
+            self.normh = LayerNormalization()
+        else:
+            self.normr = self.normz = self.normh = lambda x: x
         super(nBRUCell, self).build(input_shape)
 
     def call(self, inputs, states, training=None):
@@ -195,11 +206,9 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             prev_output_r = prev_output
             prev_output_h = prev_output
 
-        r = K.tanh(K.dot(inputs_r, self.kernelr) +
-                   K.dot(prev_output_r, self.memoryr + self.br)) + 1
-        z = K.sigmoid(K.dot(inputs_z, self.kernelz) +
-                      K.dot(prev_output_z, self.memoryz) + self.bz)
-        h = K.tanh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh)
+        r = K.tanh(self.normr(K.dot(inputs_r, self.kernelr) + K.dot(prev_output_r, self.memoryr + self.br))) + 1
+        z = K.sigmoid(self.normz(K.dot(inputs_z, self.kernelz) + K.dot(prev_output_z, self.memoryz) + self.bz))
+        h = K.tanh(self.normh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh))
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 

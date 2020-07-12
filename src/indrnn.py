@@ -2,17 +2,10 @@ from __future__ import absolute_import
 import warnings
 
 from tensorflow.keras import backend as K
-from tensorflow.keras import activations
-from tensorflow.keras import initializers
-from tensorflow.keras import regularizers
-from tensorflow.keras import constraints
-from tensorflow.keras.layers import Layer
-from tensorflow.keras.layers import InputSpec
-from tensorflow.keras.layers import RNN
-from tensorflow.python.keras.layers.recurrent import DropoutRNNCellMixin
+from tensorflow.keras import activations, initializers, regularizers, constraints
+from tensorflow.keras.layers import Layer, RNN, InputSpec, LayerNormalization
+from tensorflow.python.keras.layers.recurrent import DropoutRNNCellMixin, _caching_device, _generate_zero_filled_state_for_cell
 # from tensorflow.python.keras.layers.recurrent import _config_for_enable_caching_device
-from tensorflow.python.keras.layers.recurrent import _caching_device
-from tensorflow.python.keras.layers.recurrent import _generate_zero_filled_state_for_cell
 from tensorflow.python.util import nest
 from tensorflow.python.keras.utils import tf_utils
 
@@ -32,6 +25,7 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
                  bias_constraint=None,
                  dropout=0.,
                  recurrent_dropout=0.,
+                 use_batch_norm=False,
                  **kwargs):
         super(IndRNNCell, self).__init__(**kwargs)
 
@@ -54,6 +48,7 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
 
         self.dropout = min(1., max(0., dropout))
         self.recurrent_dropout = min(1., max(0., recurrent_dropout))
+        self.use_batch_norm = use_batch_norm
         self.state_size = self.units
         self.output_size = self.units
 
@@ -87,6 +82,10 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
                 caching_device=default_caching_device)
         else:
             self.bias = None
+        if self.use_batch_norm:
+            self.norm = LayerNormalization()
+        else:
+            self.norm = lambda x: x
         self.built = True
 
     def call(self, inputs, states, training=None):
@@ -106,8 +105,7 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
             prev_output = prev_output * rec_dp_mask
         output = h + prev_output * self.recurrent_kernel
         if self.activation is not None:
-            output = self.activation(output)
-
+            output = self.activation(self.norm(output))
         return output, [output]
 
     def get_initial_state(self, inputs=None, batch_size=None, dtype=None):
@@ -131,13 +129,16 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
                 regularizers.serialize(self.kernel_regularizer),
             'recurrent_regularizer':
                 regularizers.serialize(self.recurrent_regularizer),
-            'bias_regularizer': regularizers.serialize(self.bias_regularizer),
+            'bias_regularizer':
+                regularizers.serialize(self.bias_regularizer),
             'kernel_constraint':
                 constraints.serialize(self.kernel_constraint),
-            'recurrent_constraint': constraints.serialize(self.recurrent_constraint),
+            'recurrent_constraint':
+                constraints.serialize(self.recurrent_constraint),
             'bias_constraint':
                 constraints.serialize(self.bias_constraint),
-            'dropout': self.dropout,
+            'dropout':
+                self.dropout,
             'recurrent_dropout':
                 self.recurrent_dropout
         }

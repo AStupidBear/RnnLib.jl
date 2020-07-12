@@ -23,52 +23,56 @@ class BRUCell(DropoutRNNCellMixin, Layer):
     @tf_utils.shape_type_conversion
     def build(self, input_shape):
         default_caching_device = _caching_device(self)
-        self.kernelz = self.add_weight(
-            name="kz",
+        self.kernel_z = self.add_weight(
+            name="kernel_z",
             shape=(input_shape[1], self.units),
             initializer='glorot_uniform',
             caching_device=default_caching_device)
-        self.kernelr = self.add_weight(
-            name="kr",
+        self.kernel_r = self.add_weight(
+            name="kernel_r",
             shape=(input_shape[1], self.units),
             initializer='glorot_uniform',
             caching_device=default_caching_device)
-        self.kernelh = self.add_weight(
-            name="kh",
+        self.kernel_h = self.add_weight(
+            name="kernel_h",
             shape=(input_shape[1], self.units),
             initializer='glorot_uniform',
             caching_device=default_caching_device)
-        self.memoryz = self.add_weight(name="mz",
-                                       shape=(self.units,),
-                                       initializer=tf.keras.initializers.constant(
-                                           1.0),
-                                       caching_device=default_caching_device)
-        self.memoryr = self.add_weight(
+        self.memory_z = self.add_weight(
+            name="memory_z",
+            shape=(self.units,),
+            initializer=tf.keras.initializers.constant(1.0),
+            caching_device=default_caching_device)
+        self.memory_r = self.add_weight(
             name="mr",
             shape=(self.units,),
             initializer=tf.keras.initializers.constant(1.0),
             caching_device=default_caching_device)
-        self.br = self.add_weight(
-            name="br",
+        self.b_r = self.add_weight(
+            name="b_r",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.bz = self.add_weight(
-            name="bz",
+        self.b_z = self.add_weight(
+            name="b_z",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.bh = self.add_weight(
-            name="bh",
+        self.b_h = self.add_weight(
+            name="b_h",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
         if self.use_batch_norm:
-            self.normr = LayerNormalization()
-            self.normz = LayerNormalization()
-            self.normh = LayerNormalization()
+            self.norm_rx = LayerNormalization()
+            self.norm_rh = LayerNormalization()
+            self.norm_zx = LayerNormalization()
+            self.norm_zh = LayerNormalization()
+            self.norm_hx = LayerNormalization()
+            self.norm_hh = LayerNormalization()
         else:
-            self.normr = self.normz = self.normh = lambda x: x
+            self.norm_rx = self.norm_zx = self.norm_hx = lambda x: x
+            self.norm_rh = self.norm_zh = self.norm_hh = lambda x: x
         super(BRUCell, self).build(input_shape)
 
     def call(self, inputs, states, training=None):
@@ -95,9 +99,12 @@ class BRUCell(DropoutRNNCellMixin, Layer):
             prev_output_r = prev_output
             prev_output_h = prev_output
 
-        r = K.tanh(self.normr(K.dot(inputs_r, self.kernelr) + prev_output_r * self.memoryr + self.br)) + 1
-        z = K.sigmoid(self.normz(K.dot(inputs_z, self.kernelz) + prev_output_z * self.memoryz + self.bz))
-        h = K.tanh(self.normh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh))
+        r = K.tanh(self.norm_rx(K.dot(inputs_r, self.kernel_r)) +
+                   self.norm_rh(prev_output_r * self.memory_r) + self.b_r) + 1
+        z = K.sigmoid(self.norm_zx(K.dot(inputs_z, self.kernel_z)) +
+                      self.norm_zh(prev_output_z * self.memory_z) + self.b_z)
+        h = K.tanh(self.norm_hx(K.dot(inputs_h, self.kernel_h)) +
+                   r * prev_output_h + self.b_h)
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 
@@ -134,52 +141,56 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
     @tf_utils.shape_type_conversion
     def build(self, input_shape):
         default_caching_device = _caching_device(self)
-        self.kernelz = self.add_weight(
-            name="kz",
+        self.kernel_z = self.add_weight(
+            name="kernel_z",
             shape=(input_shape[1], self.units),
             initializer='glorot_uniform',
             caching_device=default_caching_device)
-        self.kernelr = self.add_weight(
-            name="kr",
+        self.kernel_r = self.add_weight(
+            name="kernel_r",
             shape=(input_shape[1], self.units),
             initializer='glorot_uniform',
             caching_device=default_caching_device)
-        self.kernelh = self.add_weight(
-            name="kh",
+        self.kernel_h = self.add_weight(
+            name="kernel_h",
             shape=(input_shape[1], self.units),
             initializer='glorot_uniform',
             caching_device=default_caching_device)
-        self.memoryz = self.add_weight(
-            name="mz",
+        self.memory_z = self.add_weight(
+            name="memory_z",
             shape=(self.units, self.units),
             initializer='orthogonal',
             caching_device=default_caching_device)
-        self.memoryr = self.add_weight(
+        self.memory_r = self.add_weight(
             name="mr",
             shape=(self.units, self.units),
             initializer='orthogonal',
             caching_device=default_caching_device)
-        self.br = self.add_weight(
-            name="br",
+        self.b_r = self.add_weight(
+            name="b_r",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.bz = self.add_weight(
-            name="bz",
+        self.b_z = self.add_weight(
+            name="b_z",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
-        self.bh = self.add_weight(
-            name="bh",
+        self.b_h = self.add_weight(
+            name="b_h",
             shape=(self.units,),
             initializer='zeros',
             caching_device=default_caching_device)
         if self.use_batch_norm:
-            self.normr = LayerNormalization()
-            self.normz = LayerNormalization()
-            self.normh = LayerNormalization()
+            self.norm_rx = LayerNormalization()
+            self.norm_rh = LayerNormalization()
+            self.norm_zx = LayerNormalization()
+            self.norm_zh = LayerNormalization()
+            self.norm_hx = LayerNormalization()
+            self.norm_hh = LayerNormalization()
         else:
-            self.normr = self.normz = self.normh = lambda x: x
+            self.norm_rx = self.norm_zx = self.norm_hx = lambda x: x
+            self.norm_rh = self.norm_zh = self.norm_hh = lambda x: x
         super(nBRUCell, self).build(input_shape)
 
     def call(self, inputs, states, training=None):
@@ -206,9 +217,12 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             prev_output_r = prev_output
             prev_output_h = prev_output
 
-        r = K.tanh(self.normr(K.dot(inputs_r, self.kernelr) + K.dot(prev_output_r, self.memoryr + self.br))) + 1
-        z = K.sigmoid(self.normz(K.dot(inputs_z, self.kernelz) + K.dot(prev_output_z, self.memoryz) + self.bz))
-        h = K.tanh(self.normh(K.dot(inputs_h, self.kernelh) + r * prev_output_h + self.bh))
+        r = K.tanh(self.norm_rx(K.dot(inputs_r, self.kernel_r)) +
+                   self.norm_rh(K.dot(prev_output_r, self.memory_r)) + self.b_r) + 1
+        z = K.sigmoid(self.norm_zx(K.dot(inputs_z, self.kernel_z)) +
+                      self.norm_zh(K.dot(prev_output_z, self.memory_z)) + self.b_z)
+        h = K.tanh(self.norm_hx(K.dot(inputs_h, self.kernel_h)) +
+                   r * prev_output_h + self.b_h)
         output = (1.0 - z) * h + z * prev_output_h
         return output, [output]
 

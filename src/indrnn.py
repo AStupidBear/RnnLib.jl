@@ -103,9 +103,9 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
 
         if rec_dp_mask is not None:
             prev_output = prev_output * rec_dp_mask
-        output = h + prev_output * self.recurrent_kernel
+        output = self.norm(h) + prev_output * self.recurrent_kernel
         if self.activation is not None:
-            output = self.activation(self.norm(output))
+            output = self.activation(output)
         return output, [output]
 
     def get_initial_state(self, inputs=None, batch_size=None, dtype=None):

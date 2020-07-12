@@ -26,7 +26,7 @@ function predict(m::RnnModel, h5::String)
     @unpack rnn, config = m
     !isempty(rnn) && write("model.h5", rnn)
     args = concat_config(config)
-    h5p = joinpath(dirname(h5), randstring())
+    h5p = joinpath(dirname(h5), randstring() * ".rnn")
     run(`python $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
     return h5p
 end

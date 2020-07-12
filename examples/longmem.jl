@@ -99,12 +99,14 @@ grid = Any[
 param = @grid 100 gridparams(grid)
 @unpack dset, layer, lr, epochs, dropout, hidden_sizes, use_batch_norm,
         use_skip_conn, kernel_size, recept_field_ratio = param
+
 x_trn, y_trn, x_tst, y_tst = generate_samples(dset)
 if dset == "SequentialMNIST"
     loss, out_dim, fscore = "spcce", 10, accuracy_score
 else
     loss, out_dim = "mse", 0, r2_score
 end
+recept_field = ceil(Int, size(x_trn, 3) * recept_field_ratio)
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 

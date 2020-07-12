@@ -1,11 +1,13 @@
 using Random, Statistics, Test
 using Parameters, DataStructures
 using PyCall, PyCallUtils, PandasLite
-using MLDatasets, MLSuiteBase, RnnLib
+using MLSuiteBase, RnnLib
 
 Random.seed!(1234)
 
 @from sklearn.metrics imports accuracy_score, r2_score
+@from tensorflow.keras.datasets imports imdb, mnist
+@from tensorflow.keras.preprocessing imports sequence
 
 function CopyFirstInput(n; seqlen = 300)
     x = randn(Float32, 1, n, seqlen)
@@ -47,10 +49,16 @@ function Denoising(n; seqlen = 400, lag = 300)
 end
 
 function SequentialMNIST(x, y; lag = 300)
-    x = reshape(x, :, size(x, 3))' ./ 255f0
+    x = reshape(x, size(x, 1), :) ./ 255f0
     x = hcat(x, zeros(Float32, size(x, 1), lag))
     x = reshape(x, 1, size(x)...)
-    y = reshape(y, 1, :)
+    y = Int32.(reshape(y, 1, :))
+    return  x, y
+end
+
+function IMDB(x, y; maxlen = 100)
+    x = sequence.pad_sequences(x, maxlen)
+    y = Int32.(reshape(y, 1, :))
     return  x, y
 end
 
@@ -68,14 +76,19 @@ function generate_samples(name)
         x_trn, y_trn = Denoising(45000; seqlen = 400, lag = 200)
         x_tst, y_tst = Denoising(5000; seqlen = 400, lag = 200)
     elseif name == "SequentialMNIST"
-        x_trn, y_trn = SequentialMNIST(MNIST.traindata()...)
-        x_tst, y_tst = SequentialMNIST(MNIST.testdata()...)
+        (x_trn, y_trn), (x_tst, y_tst) = mnist.load_data()
+        x_trn, y_trn = SequentialMNIST(x_trn, y_trn)
+        x_tst, y_tst = SequentialMNIST(x_tst, y_tst)
+    elseif name == "IMDB"
+        (x_trn, y_trn), (x_tst, y_tst) = imdb.load_data(num_words = 20000)
+        x_trn, y_trn = IMDB(x_trn, y_trn)
+        x_tst, y_tst = IMDB(x_tst, y_tst)
     end
     return x_trn, y_trn, x_tst, y_tst
 end
 
 grid = [
-    "dset" => ["CopyFirstInput", "AddingProblem", "CopyMemory", "Denoising", "SequentialMNIST"],
+    "dset" => ["CopyFirstInput", "AddingProblem", "CopyMemory", "Denoising", "SequentialMNIST", "IMDB"][end:end],
     "hidden_sizes" => ["32,32", "64,64", "128,128"],
     "batch_size" => [128],
     "epochs" => [60],
@@ -118,15 +131,17 @@ param = DefaultDict(nothing, param)
 
 x_trn, y_trn, x_tst, y_tst = generate_samples(dset)
 if dset == "SequentialMNIST"
-    loss, out_dim, fscore = "spcce", 10, accuracy_score
+    loss, output_dim, fscore = "spcce", 10, accuracy_score
+elseif dset == "IMDB"
+    loss, output_dim, fscore = "bce", 0, accuracy_score
 else
-    loss, out_dim, fscore = "mse", 0, r2_score
+    loss, output_dim, fscore = "mse", 0, r2_score
 end
 recept_field = ceil(Int, size(x_trn, 3) * something(recept_field_ratio, 0))
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 
-    out_dim = out_dim, loss = loss, lr = lr, epochs = epochs, patience = 3,
+    output_dim = output_dim, loss = loss, lr = lr, epochs = epochs, patience = 3, validation_split = 0.1,
 )
 RnnLib.fit!(model, x_trn, y_trn)
 ŷ_trn = RnnLib.predict(model, x_trn)
@@ -134,7 +149,7 @@ ŷ_tst = RnnLib.predict(model, x_tst)
 
 sr = Series(param)
 sr["recept_field"] = recept_field
-sr["out_dim"] = out_dim
+sr["output_dim"] = output_dim
 sr["train_shape"] = size(x_trn)
 sr["test_shape"] = size(x_tst)
 sr["train_score"] = fscore(vec(y_trn), vec(ŷ_trn))

@@ -14,7 +14,9 @@ parser.add_argument('--recept_field', type=int, default=64)
 parser.add_argument('--pool_size', type=int, default=1)
 parser.add_argument('--bottleneck_size', type=int, default=32)
 parser.add_argument('--use_skip_conn', action='store_true')
-parser.add_argument('--out_dim', type=int, default=0)
+parser.add_argument('--input_dim', type=int, default=20000)
+parser.add_argument('--embed_dim', type=int, default=128)
+parser.add_argument('--output_dim', type=int, default=0)
 parser.add_argument('--out_activation', type=str, default='linear')
 
 parser.add_argument('--l2', type=float, default=0)
@@ -103,7 +105,7 @@ from tensorflow.keras.layers import (GRU, LSTM, Activation, AveragePooling1D,
                                      Dropout, Flatten, GlobalAveragePooling1D,
                                      GlobalMaxPooling1D, Lambda, Layer, RNN,
                                      MaxPooling1D, SpatialDropout1D,
-                                     TimeDistributed, Add, Concatenate)
+                                     TimeDistributed, Add, Concatenate, Embedding)
 from tensorflow.keras.models import load_model
 from tensorflow.keras.utils import HDF5Matrix, Sequence, multi_gpu_model
 from tensorflow.python.client import device_lib
@@ -513,7 +515,7 @@ class JLSequence(Sequence):
             self.xshape = fid[feature_name].shape
             self.x = None
             self.y = fid[label_name] if label_name in fid.keys() else None
-            self.yshape = (self.xshape[::-1], 0) if self.y is None else self.y.shape
+            self.yshape = (*self.xshape[:2], 0) if self.y is None else self.y.shape
             self.w = fid[weight_name] if weight_name in fid.keys() else None
             self.pred = None
         self.logger = logger
@@ -535,13 +537,13 @@ class JLSequence(Sequence):
         self.end = self.n_sequences * self.n_batches
         self.out_seq = self.yshape[0] == self.xshape[0]
         print('JLSequence shape: (', self.n_batches, 'x', self.batch_size, ',', self.n_sequences, 'x', self.sequence_size, ')')
-        if args.out_dim < 1:
+        if args.output_dim < 1:
             if self.out_seq:
-                self.out_dim = self.yshape[-1] if len(self.yshape) == 3 else 1
+                self.output_dim = self.yshape[-1] if len(self.yshape) == 3 else 1
             else:
-                self.out_dim = self.yshape[-1] if len(self.yshape) == 2 else 1
+                self.output_dim = self.yshape[-1] if len(self.yshape) == 2 else 1
         else:
-            self.out_dim = args.out_dim
+            self.output_dim = args.output_dim
 
     def __len__(self):
         return self.end - self.start
@@ -561,10 +563,10 @@ class JLSequence(Sequence):
                 self.x = self.x[()]
                 self.y = self.y[()] if self.y else None
                 self.w = self.w[()] if self.w else None
-        x = self.x[ts, ns, :].swapaxes(0, 1)
+        x = self.x[ts, ns].swapaxes(0, 1)
         if x.dtype == 'uint8':
             x = x / 128 - 1
-        else:
+        elif x.dtype.kind == 'f':
             nan_to_num(x.reshape(-1))
         if self.y is not None:
             if self.y.shape[0] == self.xshape[0]:
@@ -696,6 +698,7 @@ if args.test:
 # model building
 
 hidden_sizes = list(map(int, args.hidden_sizes.split(',')))
+args.pool_size = min(gen.xshape[0] // 3, args.pool_size)
 loss, out_activation = args.loss, args.out_activation
 loss = 'binary_crossentropy' if loss == 'bce' else loss
 loss = 'categorical_crossentropy' if loss == 'cce' else loss
@@ -705,18 +708,15 @@ out_activation = 'softmax' if 'categorical_crossentropy' in loss else out_activa
 out_activation = 'tanh' if loss == 'pnl' else out_activation
 
 # expected input batch shape: (N, T, F)
-T, N, F = gen.xshape
-args.pool_size = min(T // 3, args.pool_size)
-
-if args.layer == 'MLP':
-    o = i = Input(shape=(T, F))
-    o = Flatten()(o)
-elif args.layer in ('IndRNN', 'PLSTM'):
-    o = i = Input(shape=(T, F))
-elif os.getenv('USE_TFLITE', '0') == '1':
-    o = i = Input(shape=(T, F), batch_size=args.batch_size)
+if len(gen.xshape) == 3:
+    o = i = Input((None, gen.xshape[2]))
 else:
-    o = i = Input(shape=(None, F))
+    o = i = Input((None,))
+    o = Embedding(args.input_dim, args.embed_dim)(o)
+if os.getenv('USE_TFLITE', '0') == '1' or args.layer == 'MLP':
+    i.set_shape((args.batch_size, *i.shape[1:]))
+    if args.layer == 'MLP':
+        o = Flatten()(o)
 for (l, h) in enumerate(hidden_sizes):
     return_sequences = l + 1 < len(hidden_sizes) or gen.out_seq
     if args.layer == 'MLP':
@@ -745,7 +745,7 @@ for (l, h) in enumerate(hidden_sizes):
     else:
         o = ResRNN(h, dropout=args.dropout, return_sequences=return_sequences,
                    use_skip_conn=args.use_skip_conn, layer=args.layer)(o)
-o = Activation(out_activation, dtype='float')(TimeDense(gen.out_dim)(o))
+o = Activation(out_activation, dtype='float')(TimeDense(gen.output_dim)(o))
 if loss == 'direct':
     o = Concatenate()([o, o, o])
 model = Model(inputs=[i], outputs=[o])

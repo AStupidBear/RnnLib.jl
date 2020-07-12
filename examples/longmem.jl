@@ -56,7 +56,7 @@ function SequentialMNIST(x, y; lag = 300)
     return  x, y
 end
 
-function IMDB(x, y; maxlen = 100)
+function IMDB(x, y; maxlen = 500)
     x = sequence.pad_sequences(x, maxlen)
     y = Int32.(reshape(y, 1, :))
     return  x, y
@@ -80,9 +80,9 @@ function generate_samples(name)
         x_trn, y_trn = SequentialMNIST(x_trn, y_trn)
         x_tst, y_tst = SequentialMNIST(x_tst, y_tst)
     elseif name == "IMDB"
-        (x_trn, y_trn), (x_tst, y_tst) = imdb.load_data(num_words = 20000)
-        x_trn, y_trn = IMDB(x_trn, y_trn)
-        x_tst, y_tst = IMDB(x_tst, y_tst)
+        (x_trn, y_trn), (x_tst, y_tst) = imdb.load_data(num_words = 5000)
+        x_trn, y_trn = IMDB(x_trn, y_trn, maxlen = 500)
+        x_tst, y_tst = IMDB(x_tst, y_tst, maxlen = 500)
     end
     return x_trn, y_trn, x_tst, y_tst
 end

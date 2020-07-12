@@ -1,5 +1,5 @@
 using Random, Statistics, Printf, Test
-using Parameters, Glob, ProgressMeter
+using Parameters, Glob, DataStructures, ProgressMeter
 using PyCall, HDF5, PyCallUtils, HDF5Utils
 using PandasLite, MLSuiteBase, RnnLib
 
@@ -98,7 +98,7 @@ grid = [
             "epochs" => [200],
         ],
         [
-            "layer" => ["GRU", "BRU", "nBRU"],
+            "layer" => ["GRU", "BRU", "nBRU", "IndRNN"],
             "use_skip_conn" => [true, false],
             "dropout" => [0.0, 0.2],
             "lr" => [1e-3, 1e-4],

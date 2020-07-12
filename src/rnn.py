@@ -357,24 +357,6 @@ def AHLN(hidden_size,
     return ahln
 
 
-def BRU(hidden_size, 
-        dropout=0.0,
-        return_sequences=False):
-    def bru(i):
-        cell = BRUCell(hidden_size)
-        return RNN(cell, return_sequences)(i)
-    return bru
-
-
-def nBRU(hidden_size,
-        dropout=0.0,
-        return_sequences=False):
-    def nBRU(i):
-        cell = nBRUCell(hidden_size)
-        return RNN(cell, return_sequences)(i)
-    return nBRU
-
-
 def CausalAveragePooling1D(pool_size):
     def pool(i):
         if pool_size > 1:
@@ -758,7 +740,7 @@ for (l, h) in enumerate(hidden_sizes):
         o = AHLN(h, args.recept_field, args.kernel_size, dropout=args.dropout, use_batch_norm=args.use_batch_norm,
                  use_skip_conn=args.use_skip_conn, return_sequences=return_sequences)(o)
     else:
-        o = ResRNN(h, dropout=args.dropout, return_sequences=args.return_sequences,
+        o = ResRNN(h, dropout=args.dropout, return_sequences=return_sequences,
                    use_skip_conn=args.use_skip_conn, layer=args.layer)(o)
 o = Activation(out_activation, dtype='float')(TimeDense(gen.out_dim)(o))
 if loss == 'direct':

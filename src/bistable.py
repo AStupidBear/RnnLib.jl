@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Layer
+from tensorflow.keras.layers import Layer, RNN
 
 
 class BRUCell(Layer):
@@ -92,3 +92,17 @@ class nBRUCell(Layer):
         base_config = super(nBRUCell, self).get_config()
         del base_config['trainable']
         return dict(list(base_config.items()) + list(config.items()))
+
+
+def BRU(hidden_size,
+        dropout=0.0,
+        return_sequences=False):
+    cell = BRUCell(hidden_size)
+    return RNN(cell, return_sequences)
+
+
+def nBRU(hidden_size,
+         dropout=0.0,
+         return_sequences=False):
+    cell = nBRUCell(hidden_size)
+    return RNN(cell, return_sequences)

@@ -11,7 +11,7 @@ RnnModel(;ka...) = RnnModel(UInt8[], Dict(k => string(v) for (k, v) in ka))
 RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
-concat_config(config) = reduce(vcat, [v == "true" ? ["--$k"] : v == "false" ? [] : ["--$k", v] for (k, v) in config])
+concat_config(config) = reduce(vcat, [v == "true" ? ["--$k"] : v ∈ ("false", "nothing") ? [] : ["--$k", v] for (k, v) in config])
 
 function fit!(m::RnnModel, h5::String)
     @unpack rnn, config = m

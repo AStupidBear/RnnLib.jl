@@ -10,7 +10,7 @@ x = randn(Float32, F, N, T)
 y = mean(x, dims = 1) * sqrt(1f0 * F)
 w = ones(Float32, N, T)
 
-for layer in ["Conv", "AHLN", "ResNet", "Inception", "TCN", "Rocket", "GRU", "BRU", "nBRU"]
+for layer in ["Conv", "AHLN", "ResNet", "Inception", "TCN", "Rocket", "GRU", "BRU", "nBRU", "IndRNN"]
     model = RnnRegressor(layer = layer, lr = 1e-2, hidden_sizes = "10", epochs = 200, validation_split = 0)
     RnnLib.fit!(model, x, y, w)
     ŷ = RnnLib.predict(model, x)

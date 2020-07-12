@@ -1,6 +1,6 @@
 using Random, Statistics, Test
-using Parameters, PyCall
-using PyCallUtils, PandasLite
+using Parameters, DataStructures
+using PyCall, PyCallUtils, PandasLite
 using MLSuiteBase, RnnLib
 
 Random.seed!(1234)
@@ -64,7 +64,7 @@ grid = Any[
             "lr" => [1e-3, 1e-2],
         ],
         [
-            "layer" => ["GRU", "BRU", "nBRU"],
+            "layer" => ["GRU", "BRU", "nBRU", "IndRNN"],
             "use_skip_conn" => [true, false],
             "dropout" => [0.0, 0.2],
             "lr" => [1e-3, 1e-4],
@@ -97,6 +97,7 @@ grid = Any[
     ],
 ]
 param = @grid 100 gridparams(grid)
+param = DefaultDict(nothing, param)
 @unpack dset, layer, lr, epochs, dropout, hidden_sizes, use_batch_norm,
         use_skip_conn, kernel_size, recept_field_ratio = param
 

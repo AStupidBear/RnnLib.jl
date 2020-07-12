@@ -855,15 +855,3 @@ model.fit(
     use_multiprocessing=args.use_multiprocessing
 )
 base_model.save(args.model_path)
-
-# import ipdb; ipdb.set_trace()
-# model2 = load_model(args.model_path, compile=False)
-# model3 = load_model(args.model_path, compile=False)
-# for (a, b) in zip(model2.get_weights(), model.get_weights()):
-#     print((a - b).sum())
-# pred = model.predict(gen)
-# pred2 = model2.predict(gen)
-# pred3 = model3.predict(gen)
-# (pred - pred2).sum()
-# model.layers[1].cell.kernel - model2.layers[1].cell.kernel
-# print(np.mean(np.abs(gen.y[:, :, :].swapaxes(0, 1) - pred)**2))

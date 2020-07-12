@@ -785,6 +785,8 @@ if local_rank == 0:
     callbacks.append(TensorBoard(args.log_dir))
     if args.validation_split > 0:
         callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
+    else:
+        callbacks.append(EarlyStopping('loss', patience=args.patience, verbose=1))
     if args.factor < 1:
         callbacks.append(ReduceLROnPlateau(
             'loss', args.factor, args.patience, min_lr=1e-6, varbose=1))

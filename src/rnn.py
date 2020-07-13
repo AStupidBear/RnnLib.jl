@@ -844,7 +844,7 @@ if args.lr == 0:
 model.fit(
     x=trn_gen,
     epochs=args.epochs,
-    verbose=1 if local_rank == 0 else 0,
+    verbose=1 if local_rank == 0 and os.getenv('CI', 'false') != 'true' else 0,
     callbacks=callbacks,
     validation_data=val_gen if len(val_gen) > 1 else None,
     shuffle=True,

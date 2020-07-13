@@ -242,7 +242,7 @@ class nBRUCell(DropoutRNNCellMixin, Layer):
             'use_batch_norm':
                 self.use_batch_norm
         }
-        base_config = super(BRUCell, self).get_config()
+        base_config = super(nBRUCell, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 def BRU(hidden_size,

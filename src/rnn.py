@@ -417,7 +417,7 @@ def pnl(y_true, y_pred, c=args.commission, λ=args.pnl_scale):
         return l
     c1 = c / K.cast(K.shape(p)[1], 'float32')
     if c > 0:
-        if T > 1:
+        if gen.sequence_size > 1:
             Δp = p[:, 1:, :] - p[:, :-1, :]
             l += c * K.mean(K.abs(Δp))
         l += c1 * K.mean(K.abs(p[:, 0, :]))

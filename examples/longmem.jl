@@ -142,7 +142,7 @@ recept_field = ceil(Int, size(x_trn)[end] * something(recept_field_ratio, 0))
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 
-    output_dim = output_dim, loss = loss, lr = lr, epochs = epochs, patience = 3, validation_split = 0.1,
+    output_dim = output_dim, loss = loss, lr = lr, epochs = epochs, patience = 5, validation_split = 0.1,
 )
 RnnLib.fit!(model, x_trn, y_trn)
 ŷ_trn = RnnLib.predict(model, x_trn)

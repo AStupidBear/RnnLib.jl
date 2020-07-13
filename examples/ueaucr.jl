@@ -124,7 +124,7 @@ out_dim = Int(maximum(y_trn) + 1)
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 
-    out_dim = out_dim, loss = "spcce", lr = lr, epochs = epochs, validation_split = 0.1
+    out_dim = out_dim, loss = "spcce", lr = lr, epochs = epochs, patience = 5, validation_split = 0.1
 )
 RnnLib.fit!(model, x_trn, y_trn)
 ŷ_trn = RnnLib.predict(model, x_trn)

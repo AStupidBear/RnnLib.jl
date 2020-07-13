@@ -1,5 +1,6 @@
 mutable struct RnnModel <: BaseEstimator
     rnn::Vector{UInt8}
+    exe::Cmd
     config::Dict{Symbol, String}
 end
 
@@ -7,16 +8,16 @@ is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.config[:loss])
 
 const rnnpy = joinpath(@__DIR__, "rnn.py")
 
-RnnModel(;ka...) = RnnModel(UInt8[], Dict(k => string(v) for (k, v) in ka))
+RnnModel(;exe = `python3`, ka...) = RnnModel(UInt8[], exe, Dict(k => string(v) for (k, v) in ka))
 RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
 concat_config(config) = reduce(vcat, [v == "true" ? ["--$k"] : v ∈ ("false", "nothing") ? [] : ["--$k", v] for (k, v) in config])
 
 function fit!(m::RnnModel, h5::String)
-    @unpack rnn, config = m
+    @unpack rnn, exe, config = m
     args = concat_config(config)
-    cmd = `python $rnnpy --data_path $h5 $args`
+    cmd = `$exe $rnnpy --data_path $h5 $args`
     println(cmd); run(cmd)
     m.rnn = read("model.h5")
     return m
@@ -27,7 +28,7 @@ function predict(m::RnnModel, h5::String)
     !isempty(rnn) && write("model.h5", rnn)
     args = concat_config(config)
     h5p = joinpath(dirname(h5), randstring() * ".rnn")
-    run(`python $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
+    run(`python3 $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
     return h5p
 end
 

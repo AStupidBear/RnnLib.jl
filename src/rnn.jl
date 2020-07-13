@@ -1,3 +1,5 @@
+using PyCall: python
+
 mutable struct RnnModel <: BaseEstimator
     rnn::Vector{UInt8}
     exe::Cmd
@@ -8,7 +10,7 @@ is_classifier(m::RnnModel) = occursin(r"ce|crossentropy", m.config[:loss])
 
 const rnnpy = joinpath(@__DIR__, "rnn.py")
 
-RnnModel(;exe = `python3`, ka...) = RnnModel(UInt8[], exe, Dict(k => string(v) for (k, v) in ka))
+RnnModel(;exe = `$python`, ka...) = RnnModel(UInt8[], exe, Dict(k => string(v) for (k, v) in ka))
 RnnRegressor(;ka...) = RnnModel(;loss = "mse", ka...)
 RnnClassifier(;ka...) = RnnModel(;loss = "bce", ka...)
 
@@ -28,7 +30,7 @@ function predict(m::RnnModel, h5::String)
     !isempty(rnn) && write("model.h5", rnn)
     args = concat_config(config)
     h5p = joinpath(dirname(h5), randstring() * ".rnn")
-    run(`python3 $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
+    run(`$python $rnnpy --data_path $h5 --pred_path $h5p --test $args`)
     return h5p
 end
 

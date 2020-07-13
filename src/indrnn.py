@@ -149,4 +149,5 @@ class IndRNNCell(DropoutRNNCellMixin, Layer):
 def IndRNN(hidden_size,
            return_sequences=False,
            **kwargs):
-    return RNN(IndRNNCell(hidden_size, **kwargs), return_sequences)
+    cells = [IndRNNCell(hidden_size, **kwargs), IndRNNCell(hidden_size, **kwargs)]
+    return RNN(cells, return_sequences)

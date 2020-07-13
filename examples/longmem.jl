@@ -90,6 +90,7 @@ end
 grid = [
     "dset" => ["CopyFirstInput", "AddingProblem", "CopyMemory", "Denoising", "SequentialMNIST", "IMDB"][end:end],
     "hidden_sizes" => ["32,32", "64,64", "128,128"],
+    "l2" => [0, 1e-5, 1e-4],
     "batch_size" => [128],
     "epochs" => [60],
     [

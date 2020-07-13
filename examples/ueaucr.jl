@@ -71,6 +71,7 @@ end
 grid = [
     "dset" => ["FreezerRegularTrain"] ∪ basename.(glob("*/*", ueaucr)),
     "hidden_sizes" => ["128", "128,128"],
+    "l2" => [0, 1e-5, 1e-4],
     [
         [
             "layer" => ["AHLN", "TCN"],

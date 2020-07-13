@@ -88,7 +88,7 @@ function generate_samples(name)
 end
 
 grid = [
-    "dset" => ["CopyFirstInput", "AddingProblem", "CopyMemory", "Denoising", "SequentialMNIST", "IMDB"][end:end],
+    "dset" => ["CopyFirstInput", "AddingProblem", "CopyMemory", "Denoising", "SequentialMNIST", "IMDB"],
     "hidden_sizes" => ["32,32", "64,64", "128,128"],
     "l2" => [0, 1e-5, 1e-4],
     "batch_size" => [128],
@@ -100,21 +100,21 @@ grid = [
             "kernel_size" => [3, 5],
             "use_skip_conn" => [true, false],
             "recept_field_ratio" => [0.1, 0.3, 0.5, 0.7],
-            "dropout" => [0.0, 0.1],
+            "dropout" => [0.0, 0.1, 0.2],
             "use_batch_norm" => [true, false],
             "lr" => [1e-3, 1e-2],
         ],
         [
             "layer" => ["ResNet", "Inception"],
             "kernel_size" => [3, 5, 7],
-            "dropout" => [0.0, 0.1],
+            "dropout" => [0.0, 0.1, 0.2],
             "use_batch_norm" => [true, false],
             "lr" => [1e-3, 1e-2],
         ],
         [
             "layer" => ["GRU", "BRU", "nBRU", "IndRNN"],
             "use_skip_conn" => [true, false],
-            "dropout" => [0.0, 0.1],
+            "dropout" => [0.0, 0.1, 0.2],
             "use_batch_norm" => [true, false],
             "lr" => [1e-3, 1e-4],
         ],

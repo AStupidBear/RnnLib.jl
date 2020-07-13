@@ -125,7 +125,7 @@ grid = [
         ]
     ],
 ]
-param = @grid 100 gridparams(grid)
+param = @grid 1000 gridparams(grid)
 param = DefaultDict(nothing, param)
 @unpack dset, layer, lr, epochs, dropout, hidden_sizes, use_batch_norm,
         use_skip_conn, kernel_size, recept_field_ratio = param
@@ -138,7 +138,7 @@ elseif dset == "IMDB"
 else
     loss, output_dim, fscore = "mse", 0, r2_score
 end
-recept_field = ceil(Int, size(x_trn, 3) * something(recept_field_ratio, 0))
+recept_field = ceil(Int, size(x_trn)[end] * something(recept_field_ratio, 0))
 
 model = RnnModel(
     layer = layer, hidden_sizes = hidden_sizes, kernel_size = kernel_size, recept_field = recept_field, 

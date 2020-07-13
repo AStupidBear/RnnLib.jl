@@ -20,7 +20,7 @@ for layer in ["Conv", "AHLN", "ResNet", "Inception", "TCN", "Rocket", "GRU", "BR
         y′ = binary ? (@. ifelse(y > 0f0, 1f0, 0f0)) : (@. ifelse(abs(y) > 0.5f0, sign(y) + 1f0, 1f0))
         model = RnnClassifier(
             layer = layer, hidden_sizes = "10", epochs = 200, validation_split = 0,
-            lr = 1e-2, loss = binary ? "bce" : "spcce", out_dim = binary ? 1 : 3
+            lr = 1e-2, loss = binary ? "bce" : "spcce", output_dim = binary ? 1 : 3
         )
         RnnLib.fit!(model, x, y′, w)
         ŷ = RnnLib.predict(model, x)

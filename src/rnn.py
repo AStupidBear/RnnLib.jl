@@ -860,4 +860,5 @@ model.fit(
     workers=0 if loss == 'direct' else 4,
     use_multiprocessing=args.use_multiprocessing
 )
-base_model.save(args.model_path)
+if rank == 0:
+    base_model.save(args.model_path)

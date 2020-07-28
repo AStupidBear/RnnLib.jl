@@ -493,11 +493,11 @@ def nan_to_num(x):
     for i in range(x.shape[0]):
         xi = x[i]
         if np.isnan(xi):
-            x[i] = 0
-        elif xi < -5:
-            x[i] = -5
-        elif xi > 5:
-            x[i] = 5
+            x[i] = 0.0
+        elif xi < -5.0:
+            x[i] = -5.0
+        elif xi > 5.0:
+            x[i] = 5.0
     return x
 
 class JLSequence(Sequence):

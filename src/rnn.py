@@ -536,7 +536,8 @@ class JLSequence(Sequence):
         self.start = 0
         self.end = self.n_sequences * self.n_batches
         self.out_seq = self.yshape[0] == self.xshape[0]
-        print('JLSequence shape: (', self.n_batches, 'x', self.batch_size, ',', self.n_sequences, 'x', self.sequence_size, ')')
+        if rank == 0:
+            print('JLSequence shape: (', self.n_batches, 'x', self.batch_size, ',', self.n_sequences, 'x', self.sequence_size, ')')
         if args.output_dim < 1:
             if self.out_seq:
                 self.output_dim = self.yshape[-1] if len(self.yshape) == 3 else 1
@@ -662,11 +663,12 @@ try:
     hvd.init()
     world_size = hvd.size()
     use_horovod = world_size > 1
+    rank = hvd.rank()
     local_rank = hvd.local_rank()
 except:
     world_size = 1
     use_horovod = False
-    local_rank = 0
+    rank = local_rank = 0
 
 # set gpu specific options
 gpus = tf.config.list_physical_devices('GPU')
@@ -749,7 +751,8 @@ o = Activation(out_activation, dtype='float')(TimeDense(gen.output_dim)(o))
 if loss == 'direct':
     o = Concatenate()([o, o, o])
 model = Model(inputs=[i], outputs=[o])
-print(model.summary())
+if rank == 0:
+    print(model.summary())
 
 # warm start
 resume_from_epoch = 0
@@ -759,7 +762,8 @@ if args.warm_start:
         if os.path.isfile(h5):
             resume_from_epoch = try_epoch
             model = load_model(h5, compile=False)
-            print('warm start...')
+            if rank == 0:
+                print('warm start...')
             break
 else:
     import shutil
@@ -782,7 +786,7 @@ if use_horovod:
         args.warmup_epochs, verbose=1))
 if loss == 'direct':
     callbacks.append(logger)
-if local_rank == 0:
+if rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
     callbacks.append(AltModelCheckpoint(args.log_dir + '/' + args.ckpt_fmt, base_model))
     callbacks.append(TensorBoard(args.log_dir))
@@ -834,17 +838,18 @@ if args.debug:
 # lr finder
 if args.lr == 0:
     lr_finder = LRFinder(model)
-    epochs_ = max(1, 100 * args.batch_size // N)
+    epochs_ = max(1, 100 * args.batch_size //  gen.xshape[1])
     lr_finder.find_generator(gen, 1e-6, 1e-2, epochs_)
     best_lr = min(1e-3, lr_finder.get_best_lr(5))
     K.set_value(model.optimizer.lr, best_lr)
-    print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
+    if rank == 0:
+        print(40 * '=', '\nSet lr to: %s\n' % best_lr,  40 * '=')
 
 # train model
 model.fit(
     x=trn_gen,
     epochs=args.epochs,
-    verbose=1 if local_rank == 0 and os.getenv('CI', 'false') != 'true' else 0,
+    verbose=1 if rank == 0 and os.getenv('CI', 'false') != 'true' else 0,
     callbacks=callbacks,
     validation_data=val_gen if len(val_gen) > 1 else None,
     shuffle=True,

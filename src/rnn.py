@@ -669,6 +669,7 @@ except:
     world_size = 1
     use_horovod = False
     rank = local_rank = 0
+verbose=1 if rank == 0 and os.getenv('CI', 'false') != 'true' else 0
 
 # set gpu specific options
 gpus = tf.config.list_physical_devices('GPU')
@@ -783,20 +784,20 @@ if use_horovod:
     callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
     callbacks.append(hvd.callbacks.MetricAverageCallback())
     callbacks.append(hvd.callbacks.LearningRateWarmupCallback(
-        args.warmup_epochs, verbose=1))
+        args.warmup_epochs, verbose=verbose))
 if loss == 'direct':
     callbacks.append(logger)
 if rank == 0:
     # Horovod: save checkpoints only on worker 0 to prevent other workers from corrupting them.
     callbacks.append(AltModelCheckpoint(args.log_dir + '/' + args.ckpt_fmt, base_model))
     callbacks.append(TensorBoard(args.log_dir))
-    if len(val_gen) > 1:
-        callbacks.append(EarlyStopping(patience=args.patience, verbose=1, restore_best_weights=True))
-    else:
-        callbacks.append(EarlyStopping('loss', patience=args.patience, verbose=1))
-    if args.factor < 1:
-        callbacks.append(ReduceLROnPlateau(
-            'loss', args.factor, args.patience, min_lr=1e-6, varbose=1))
+if len(val_gen) > 1:
+    callbacks.append(EarlyStopping(patience=args.patience, verbose=verbose, restore_best_weights=True))
+else:
+    callbacks.append(EarlyStopping('loss', patience=args.patience, verbose=verbose))
+if args.factor < 1:
+    callbacks.append(ReduceLROnPlateau(
+        'loss', args.factor, args.patience, min_lr=1e-6, varbose=verbose))
 
 # optimizer
 weight_decays = {l: args.l2 for l in get_weight_decays(model)}

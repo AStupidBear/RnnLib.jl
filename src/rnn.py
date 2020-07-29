@@ -766,7 +766,7 @@ if args.warm_start:
             if rank == 0:
                 print('warm start...')
             break
-else:
+elif rank == 0:
     import shutil
     shutil.rmtree(args.log_dir, ignore_errors=True)
 if args.reset_epoch:

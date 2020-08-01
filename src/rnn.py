@@ -562,8 +562,8 @@ class JLSequence(Sequence):
             self.w = fid[self.weight_name] if self.weight_name in fid.keys() else None
             if self.prefetch:
                 self.x = self.x[()]
-                self.y = self.y[()] if self.y else None
-                self.w = self.w[()] if self.w else None
+                self.y = self.y[()] if self.y is not None else None
+                self.w = self.w[()] if self.w is not None else None
         x = self.x[ts, ns].swapaxes(0, 1)
         if x.dtype == 'uint8':
             x = x / 128 - 1

@@ -564,11 +564,11 @@ class JLSequence(Sequence):
                 self.x = self.x[()]
                 self.y = self.y[()] if self.y is not None else None
                 self.w = self.w[()] if self.w is not None else None
-        x = self.x[ts, ns].swapaxes(0, 1)
+        x = self.x[ts, ns].swapaxes(0, 1).copy()
         if x.dtype == 'uint8':
             x = x / 128 - 1
         elif x.dtype.kind == 'f':
-            nan_to_num(x.reshape(-1))
+            nan_to_num(x.ravel())
         if self.y is not None:
             if self.y.shape[0] == self.xshape[0]:
                 y = self.y[ts, ns].swapaxes(0, 1)

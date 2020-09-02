@@ -694,7 +694,7 @@ trn_gen, val_gen = gen.split(args.validation_split)
 
 if args.test:
     model = load_model(args.model_path, compile=False)
-    gen.fill_pred(model.predict(gen))
+    gen.fill_pred(model.predict(gen, workers=0 if os.uname().machine == 'aarch64' else 4))
     exit()
 
 ###################################################################################################

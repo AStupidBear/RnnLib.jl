@@ -857,7 +857,7 @@ model.fit(
     initial_epoch=resume_from_epoch,
     steps_per_epoch=len(trn_gen) // world_size,
     validation_steps=len(val_gen) // world_size,
-    workers=0 if loss == 'direct' else 4,
+    workers=0 if loss == 'direct' or os.uname().machine == 'aarch64' else 4,
     use_multiprocessing=args.use_multiprocessing
 )
 if rank == 0:
